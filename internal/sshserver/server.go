@@ -155,7 +155,7 @@ func (s *Server) interactiveSession(ch ssh.Channel) {
 	io.WriteString(ch, prompt)
 
 	buf := make([]byte, 4096)
-	var line strings.Builder
+	var line []byte
 	for {
 		n, err := ch.Read(buf)
 		if err != nil {
@@ -165,8 +165,8 @@ func (s *Server) interactiveSession(ch ssh.Channel) {
 			switch b {
 			case '\r', '\n':
 				io.WriteString(ch, "\r\n")
-				cmd := strings.TrimSpace(line.String())
-				line.Reset()
+				cmd := strings.TrimSpace(string(line))
+				line = line[:0]
 				if cmd == "exit" || cmd == "quit" {
 					return
 				}
@@ -176,14 +176,12 @@ func (s *Server) interactiveSession(ch ssh.Channel) {
 				}
 				io.WriteString(ch, prompt)
 			case 127, 8: // backspace
-				if line.Len() > 0 {
-					s := line.String()
-					line.Reset()
-					line.WriteString(s[:len(s)-1])
+				if len(line) > 0 {
+					line = line[:len(line)-1]
 					io.WriteString(ch, "\b \b")
 				}
 			default:
-				line.WriteByte(b)
+				line = append(line, b)
 				ch.Write([]byte{b})
 			}
 		}

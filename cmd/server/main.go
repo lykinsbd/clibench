@@ -4,6 +4,9 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/lykinsbd/clibench/internal/device"
 	"github.com/lykinsbd/clibench/internal/httpserver"
@@ -36,7 +39,16 @@ func main() {
 	}()
 
 	httpSrv := httpserver.New(fmt.Sprintf(":%d", *httpsPort), dev)
-	if err := httpSrv.ListenAndServeTLS(); err != nil {
-		log.Fatalf("https: %v", err)
-	}
+	go func() {
+		if err := httpSrv.ListenAndServeTLS(); err != nil {
+			log.Fatalf("https: %v", err)
+		}
+	}()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	sig := <-sigCh
+	log.Printf("Received %v, shutting down", sig)
+	sshSrv.Close()
+	httpSrv.Close()
 }

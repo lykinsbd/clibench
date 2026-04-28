@@ -129,6 +129,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, err := io.ReadAll(r.Body)
+	r.Body.Close()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
