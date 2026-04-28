@@ -383,6 +383,10 @@ func benchHTTPS(addr, user, pass string, iterations, concurrency, cmdsPerIter in
 		}
 		_, _ = io.ReadAll(resp.Body)
 		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			log.Printf("https batch: HTTP %d", resp.StatusCode)
+			return errDuration
+		}
 		return time.Since(start)
 	})
 
@@ -419,6 +423,10 @@ func benchHTTPS(addr, user, pass string, iterations, concurrency, cmdsPerIter in
 			}
 			_, _ = io.ReadAll(resp.Body)
 			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				log.Printf("https multi: HTTP %d", resp.StatusCode)
+				return errDuration
+			}
 			return time.Since(start)
 		})
 		results = append(results, stats.Summarize("https", "multi-cmd", cmdsPerIter, iterations, concurrency, profile, rttMs, multiTimes))
@@ -452,6 +460,10 @@ func benchProxy(freshAddr, pooledAddr, user, pass string, iterations, concurrenc
 		}
 		_, _ = io.ReadAll(resp.Body)
 		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			log.Printf("proxy: HTTP %d", resp.StatusCode)
+			return errDuration
+		}
 		return time.Since(start)
 	}
 
@@ -487,23 +499,43 @@ func doHTTPExec(client *http.Client, addr, user, pass string) error {
 // ptyReader wraps an io.Reader with a buffer so readUntil doesn't lose
 // data that arrives after the match in the same Read() call.
 type ptyReader struct {
-	r   io.Reader
-	buf string
+	r       io.Reader
+	buf     string
+	timeout time.Duration
 }
 
 func (p *ptyReader) readUntil(target string) error {
 	b := make([]byte, 4096)
+	deadline := time.NewTimer(p.timeout)
+	defer deadline.Stop()
+
+	type readResult struct {
+		n   int
+		err error
+	}
+
 	for {
 		if idx := strings.Index(p.buf, target); idx >= 0 {
 			p.buf = p.buf[idx+len(target):]
 			return nil
 		}
-		n, err := p.r.Read(b)
-		if n > 0 {
-			p.buf += string(b[:n])
-		}
-		if err != nil {
-			return err
+
+		ch := make(chan readResult, 1)
+		go func() {
+			n, err := p.r.Read(b)
+			ch <- readResult{n, err}
+		}()
+
+		select {
+		case res := <-ch:
+			if res.n > 0 {
+				p.buf += string(b[:res.n])
+			}
+			if res.err != nil {
+				return res.err
+			}
+		case <-deadline.C:
+			return fmt.Errorf("timeout waiting for %q (buf: %q)", target, p.buf)
 		}
 	}
 }
@@ -527,7 +559,7 @@ func ptyExecCmds(sess *ssh.Session, prompt string, cmds int) error {
 		return err
 	}
 
-	pr := &ptyReader{r: r}
+	pr := &ptyReader{r: r, timeout: 10 * time.Second}
 
 	// Wait for initial prompt
 	if err := pr.readUntil(prompt); err != nil {

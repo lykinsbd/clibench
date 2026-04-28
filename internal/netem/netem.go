@@ -30,11 +30,13 @@ func Setup(wanDelay, campusDelay time.Duration, wanPorts, campusPorts []int) err
 
 	if wanDelay > 0 {
 		if err := addNetemBand(2, wanDelay, wanPorts); err != nil {
+			Teardown()
 			return fmt.Errorf("wan band: %w", err)
 		}
 	}
 	if campusDelay > 0 {
 		if err := addNetemBand(3, campusDelay, campusPorts); err != nil {
+			Teardown()
 			return fmt.Errorf("campus band: %w", err)
 		}
 	}
