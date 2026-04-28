@@ -216,7 +216,7 @@ func benchSSH(addr, user, pass string, iterations, concurrency, cmdsPerIter int,
 		log.Printf("ssh reuse dial: %v (skipping reuse test)", err)
 	} else {
 		if sess, err := sharedConn.NewSession(); err == nil {
-			sess.Output("show version")
+			_, _ = sess.Output("show version")
 			sess.Close()
 		}
 		reuseTimes = stats.RunParallel(iterations, concurrency, func() time.Duration {
@@ -349,7 +349,7 @@ func benchHTTPS(addr, user, pass string, iterations, concurrency, cmdsPerIter in
 		Timeout:   30 * time.Second,
 	}
 	// Warmup: one request to establish the TLS session
-	doHTTPExec(keepAliveClient, addr, user, pass)
+	_ = doHTTPExec(keepAliveClient, addr, user, pass)
 
 	reuseTimes := stats.RunParallel(iterations, concurrency, func() time.Duration {
 		start := time.Now()
@@ -381,7 +381,7 @@ func benchHTTPS(addr, user, pass string, iterations, concurrency, cmdsPerIter in
 			log.Printf("https batch: %v", err)
 			return errDuration
 		}
-		io.ReadAll(resp.Body)
+		_, _ = io.ReadAll(resp.Body)
 		resp.Body.Close()
 		return time.Since(start)
 	})
@@ -417,7 +417,7 @@ func benchHTTPS(addr, user, pass string, iterations, concurrency, cmdsPerIter in
 				log.Printf("https multi: %v", err)
 				return errDuration
 			}
-			io.ReadAll(resp.Body)
+			_, _ = io.ReadAll(resp.Body)
 			resp.Body.Close()
 			return time.Since(start)
 		})
@@ -450,7 +450,7 @@ func benchProxy(freshAddr, pooledAddr, user, pass string, iterations, concurrenc
 			log.Printf("proxy: %v", err)
 			return errDuration
 		}
-		io.ReadAll(resp.Body)
+		_, _ = io.ReadAll(resp.Body)
 		resp.Body.Close()
 		return time.Since(start)
 	}
@@ -476,8 +476,11 @@ func doHTTPExec(client *http.Client, addr, user, pass string) error {
 	if err != nil {
 		return err
 	}
-	io.ReadAll(resp.Body)
+	_, _ = io.ReadAll(resp.Body)
 	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
 	return nil
 }
 

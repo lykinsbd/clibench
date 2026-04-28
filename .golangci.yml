@@ -8,25 +8,21 @@ linters:
 
 linters-settings:
   errcheck:
-    # These functions are intentionally fire-and-forget in this codebase.
     exclude-functions:
-      - io.WriteString
-      - io.Copy
-      - (io.Closer).Close
-      - (*golang.org/x/crypto/ssh.Channel).SendRequest
+      # SSH protocol acks — no meaningful recovery
       - (*golang.org/x/crypto/ssh.Request).Reply
-      - (net.Conn).Write
-      - (net.Conn).Read
-      - (*net/http.Client).Do
+      - (golang.org/x/crypto/ssh.NewChannel).Reject
+      - (*golang.org/x/crypto/ssh.Channel).SendRequest
+      # Writing to SSH channels in interactive session handlers —
+      # only recovery is closing the connection, which the deferred
+      # Close() already handles
+      - io.WriteString
       - (*golang.org/x/crypto/ssh.Channel).Write
-      - (ssh.NewChannel).Reject
-      - (net.Listener).Close
-      - (*github.com/vishvananda/netlink).QdiscDel
+      # Best-effort teardown — qdisc may already be removed
       - netlink.QdiscDel
 
 issues:
   exclude-rules:
-    # Test files: allow unchecked errors for setup helpers
     - path: _test\.go
       linters:
         - errcheck
