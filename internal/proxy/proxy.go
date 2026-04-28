@@ -115,8 +115,7 @@ func (s *Server) getSSH() (*ssh.Client, bool, error) {
 		c, err := ssh.Dial("tcp", s.backendAddr, s.sshCfg)
 		return c, false, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// Caller must hold s.mu when using the pooled connection.
 	if s.pool != nil {
 		return s.pool, true, nil
 	}
@@ -129,9 +128,8 @@ func (s *Server) getSSH() (*ssh.Client, bool, error) {
 }
 
 // resetPool clears the pooled connection so the next call reconnects.
+// Caller must hold s.mu.
 func (s *Server) resetPool() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.pool != nil {
 		s.pool.Close()
 		s.pool = nil
@@ -139,6 +137,11 @@ func (s *Server) resetPool() {
 }
 
 func (s *Server) execSSH(commands []string) (string, error) {
+	if s.pooled {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+	}
+
 	conn, pooled, err := s.getSSH()
 	if err != nil {
 		return "", fmt.Errorf("ssh dial: %w", err)

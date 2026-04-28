@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -22,19 +23,34 @@ func main() {
 	}
 	fmt.Printf("Loaded %d commands\n", len(dev.Commands()))
 
-	// Start SSH
-	sshSrv, err := sshserver.New(":2240", dev)
+	// Start SSH on ephemeral port
+	sshLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ssh listen: %v\n", err)
+		os.Exit(1)
+	}
+	sshSrv, err := sshserver.New(sshLn.Addr().String(), dev)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ssh init: %v\n", err)
 		os.Exit(1)
 	}
+	sshSrv.SetListener(sshLn)
 	go sshSrv.ListenAndServe()
 
-	// Start HTTPS
-	httpSrv := httpserver.New(":8460", dev)
+	// Start HTTPS on ephemeral port
+	httpsLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "https listen: %v\n", err)
+		os.Exit(1)
+	}
+	httpSrv := httpserver.New(httpsLn.Addr().String(), dev)
+	httpSrv.SetListener(httpsLn)
 	go httpSrv.ListenAndServeTLS()
 
-	time.Sleep(time.Second)
+	time.Sleep(500 * time.Millisecond)
+
+	sshAddr := sshLn.Addr().String()
+	httpsAddr := httpsLn.Addr().String()
 
 	// Test HTTPS
 	fmt.Println("\n=== HTTPS Test ===")
@@ -42,7 +58,7 @@ func main() {
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
 		Timeout:   5 * time.Second,
 	}
-	req, _ := http.NewRequest("GET", "https://localhost:8460/admin/exec/show+version", nil)
+	req, _ := http.NewRequest("GET", fmt.Sprintf("https://%s/admin/exec/show+version", httpsAddr), nil)
 	req.SetBasicAuth("admin", "admin")
 	resp, err := client.Do(req)
 	if err != nil {
@@ -61,7 +77,7 @@ func main() {
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         5 * time.Second,
 	}
-	conn, err := ssh.Dial("tcp", "localhost:2240", cfg)
+	conn, err := ssh.Dial("tcp", sshAddr, cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ssh dial: %v\n", err)
 		os.Exit(1)
