@@ -1,28 +1,43 @@
+version: "2"
 linters:
-  enable:
-    - errcheck
-    - govet
-    - staticcheck
-    - unused
-    - gosimple
-
-linters-settings:
-  errcheck:
-    exclude-functions:
-      # SSH protocol acks — no meaningful recovery
-      - (*golang.org/x/crypto/ssh.Request).Reply
-      - (golang.org/x/crypto/ssh.NewChannel).Reject
-      - (*golang.org/x/crypto/ssh.Channel).SendRequest
-      # Writing to SSH channels in interactive session handlers —
-      # only recovery is closing the connection, which the deferred
-      # Close() already handles
-      - io.WriteString
-      - (*golang.org/x/crypto/ssh.Channel).Write
-      # Best-effort teardown — qdisc may already be removed
-      - netlink.QdiscDel
-
-issues:
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - errcheck
+  settings:
+    errcheck:
+      exclude-functions:
+        # SSH protocol acks — no meaningful recovery
+        - (*golang.org/x/crypto/ssh.Request).Reply
+        - (golang.org/x/crypto/ssh.NewChannel).Reject
+        - (*golang.org/x/crypto/ssh.Channel).SendRequest
+        - (*golang.org/x/crypto/ssh.Channel).Write
+        - (golang.org/x/crypto/ssh.Channel).SendRequest
+        - (golang.org/x/crypto/ssh.Channel).Write
+        # Writing to streams in session handlers
+        - io.WriteString
+        # Best-effort teardown — qdisc may already be removed
+        - (github.com/vishvananda/netlink).QdiscDel
+        - github.com/vishvananda/netlink.QdiscDel
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - errcheck
+        path: _test\.go
+      # Fire-and-forget server goroutines in cmd/ entrypoints
+      - linters:
+          - errcheck
+        source: "go .+\\.(ListenAndServe|ListenAndServeTLS)\\(\\)"
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

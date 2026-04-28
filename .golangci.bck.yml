@@ -1,0 +1,28 @@
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - gosimple
+
+linters-settings:
+  errcheck:
+    exclude-functions:
+      # SSH protocol acks — no meaningful recovery
+      - (*golang.org/x/crypto/ssh.Request).Reply
+      - (golang.org/x/crypto/ssh.NewChannel).Reject
+      - (*golang.org/x/crypto/ssh.Channel).SendRequest
+      # Writing to SSH channels in interactive session handlers —
+      # only recovery is closing the connection, which the deferred
+      # Close() already handles
+      - io.WriteString
+      - (*golang.org/x/crypto/ssh.Channel).Write
+      # Best-effort teardown — qdisc may already be removed
+      - netlink.QdiscDel
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
