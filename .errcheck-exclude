@@ -1,0 +1,3 @@
+io.WriteString
+fmt.Fprintf
+io.Copy

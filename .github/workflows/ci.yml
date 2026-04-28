@@ -23,6 +23,13 @@ jobs:
         run: go install honnef.co/go/tools/cmd/staticcheck@latest
       - name: Staticcheck
         run: staticcheck ./...
+      - name: Install errcheck
+        run: go install github.com/kisielk/errcheck@latest
+      - name: Errcheck
+        # Informational until golangci-lint supports Go 1.26 for
+        # type-aware exclusions. Known findings are all Close(),
+        # SSH protocol acks, and fire-and-forget goroutines.
+        run: errcheck -exclude .errcheck-exclude -ignoretests -asserts ./... || true
 
   test:
     runs-on: ubuntu-latest
