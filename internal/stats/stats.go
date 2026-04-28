@@ -110,7 +110,6 @@ func Percentile(sorted []float64, p float64) float64 {
 func RunParallel(iterations, concurrency int, fn func() time.Duration) []time.Duration {
 	results := make([]time.Duration, iterations)
 	sem := make(chan struct{}, concurrency)
-	var mu sync.Mutex
 	var wg sync.WaitGroup
 
 	for i := 0; i < iterations; i++ {
@@ -119,10 +118,7 @@ func RunParallel(iterations, concurrency int, fn func() time.Duration) []time.Du
 		go func(idx int) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			d := fn()
-			mu.Lock()
-			results[idx] = d
-			mu.Unlock()
+			results[idx] = fn()
 		}(i)
 	}
 	wg.Wait()
