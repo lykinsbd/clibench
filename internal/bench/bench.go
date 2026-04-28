@@ -229,21 +229,24 @@ func HTTPS(c Config) []stats.Result {
 		return time.Since(start)
 	})
 
-	// Mode 3: batch POST
+	// Mode 3: batch POST — reuses TLS connection so we measure the
+	// payload strategy, not connection setup.
 	batchPayload := stats.GenerateExecPayload(c.Commands)
+	batchClient := &http.Client{
+		Transport: &http.Transport{TLSClientConfig: tlsCfg},
+		Timeout:   30 * time.Second,
+	}
+	_ = doHTTPExec(batchClient, c.Addr, c.User, c.Pass) // warmup
+
 	batchTimes := stats.RunParallel(c.Iterations, c.Concurrency, func() time.Duration {
 		start := time.Now()
-		client := &http.Client{
-			Transport: &http.Transport{TLSClientConfig: tlsCfg},
-			Timeout:   30 * time.Second,
-		}
 		url := fmt.Sprintf("https://%s/admin/config", c.Addr)
 		req, err := http.NewRequest("POST", url, strings.NewReader(batchPayload))
 		if err != nil {
 			return errDuration
 		}
 		req.SetBasicAuth(c.User, c.Pass)
-		resp, err := client.Do(req)
+		resp, err := batchClient.Do(req)
 		if err != nil {
 			log.Printf("https batch: %v", err)
 			return errDuration
@@ -271,19 +274,21 @@ func HTTPS(c Config) []stats.Result {
 		}
 		multiPath := strings.Join(cmdParts, "/")
 
+		multiClient := &http.Client{
+			Transport: &http.Transport{TLSClientConfig: tlsCfg},
+			Timeout:   30 * time.Second,
+		}
+		_ = doHTTPExec(multiClient, c.Addr, c.User, c.Pass) // warmup
+
 		multiTimes := stats.RunParallel(c.Iterations, c.Concurrency, func() time.Duration {
 			start := time.Now()
-			client := &http.Client{
-				Transport: &http.Transport{TLSClientConfig: tlsCfg},
-				Timeout:   30 * time.Second,
-			}
 			url := fmt.Sprintf("https://%s/admin/exec/%s", c.Addr, multiPath)
 			req, err := http.NewRequest("GET", url, nil)
 			if err != nil {
 				return errDuration
 			}
 			req.SetBasicAuth(c.User, c.Pass)
-			resp, err := client.Do(req)
+			resp, err := multiClient.Do(req)
 			if err != nil {
 				log.Printf("https multi: %v", err)
 				return errDuration
