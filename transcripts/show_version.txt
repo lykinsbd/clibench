@@ -1,0 +1,22 @@
+Cisco IOS XE Software, Version 16.04.01
+Cisco IOS Software [Everest], CSR1000V Software (X86_64_LINUX_IOSD-UNIVERSALK9-M), Version 16.4.1, RELEASE SOFTWARE (fc2)
+Technical Support: http://www.cisco.com/techsupport
+Copyright (c) 1986-2016 by Cisco Systems, Inc.
+Compiled Sun 27-Nov-16 13:02 by mcpre
+
+ROM: IOS-XE ROMMON
+
+{{.Hostname}} uptime is 4 hours, 55 minutes
+Uptime for this control processor is 4 hours, 56 minutes
+System returned to ROM by reload
+System image file is "bootflash:packages.conf"
+Last reload reason: reload
+
+cisco CSR1000V (VXE) processor (revision VXE) with 2392579K/3075K bytes of memory.
+Processor board ID 9FKLJWM5EB0
+10 Gigabit Ethernet interfaces
+32768K bytes of non-volatile configuration memory.
+8113280K bytes of physical memory.
+7774207K bytes of virtual hard disk at bootflash:.
+
+Configuration register is 0x2102
