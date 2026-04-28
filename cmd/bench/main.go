@@ -165,7 +165,9 @@ func main() {
 
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	enc.Encode(results)
+	if err := enc.Encode(results); err != nil {
+		log.Fatalf("json encode: %v", err)
+	}
 }
 
 func sshConfig(user, pass string) *ssh.ClientConfig {

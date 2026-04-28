@@ -1,0 +1,32 @@
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - gosimple
+
+linters-settings:
+  errcheck:
+    # These functions are intentionally fire-and-forget in this codebase.
+    exclude-functions:
+      - io.WriteString
+      - io.Copy
+      - (io.Closer).Close
+      - (*golang.org/x/crypto/ssh.Channel).SendRequest
+      - (*golang.org/x/crypto/ssh.Request).Reply
+      - (net.Conn).Write
+      - (net.Conn).Read
+      - (*net/http.Client).Do
+      - (*golang.org/x/crypto/ssh.Channel).Write
+      - (ssh.NewChannel).Reject
+      - (net.Listener).Close
+      - (*github.com/vishvananda/netlink).QdiscDel
+      - netlink.QdiscDel
+
+issues:
+  exclude-rules:
+    # Test files: allow unchecked errors for setup helpers
+    - path: _test\.go
+      linters:
+        - errcheck
