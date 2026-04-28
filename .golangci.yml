@@ -6,14 +6,11 @@ linters:
         # SSH protocol acks — no meaningful recovery
         - (*golang.org/x/crypto/ssh.Request).Reply
         - (golang.org/x/crypto/ssh.NewChannel).Reject
-        - (*golang.org/x/crypto/ssh.Channel).SendRequest
-        - (*golang.org/x/crypto/ssh.Channel).Write
         - (golang.org/x/crypto/ssh.Channel).SendRequest
         - (golang.org/x/crypto/ssh.Channel).Write
         # Writing to streams in session handlers
         - io.WriteString
         # Best-effort teardown — qdisc may already be removed
-        - (github.com/vishvananda/netlink).QdiscDel
         - github.com/vishvananda/netlink.QdiscDel
   exclusions:
     generated: lax
