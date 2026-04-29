@@ -13,9 +13,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
+      - name: Extract tag message
+        id: tag
+        run: |
+          # Get the annotated tag message (everything after the first line)
+          MSG=$(git tag -l --format='%(contents:body)' "${GITHUB_REF_NAME}")
+          if [[ -z "$MSG" ]]; then
+            MSG=$(git tag -l --format='%(contents:subject)' "${GITHUB_REF_NAME}")
+          fi
+          # Write to file to preserve newlines
+          echo "$MSG" > /tmp/release-notes.md
+          # Append commit list since last tag
+          PREV_TAG=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || echo "")
+          if [[ -n "$PREV_TAG" ]]; then
+            echo "" >> /tmp/release-notes.md
+            echo "## Commits since ${PREV_TAG}" >> /tmp/release-notes.md
+            git log --oneline "${PREV_TAG}..${GITHUB_REF_NAME}" >> /tmp/release-notes.md
+          fi
 
       - name: Build binaries
         run: |
@@ -37,5 +57,5 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body_path: /tmp/release-notes.md
           files: dist/*.tar.gz
