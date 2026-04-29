@@ -35,14 +35,35 @@ make bench-regional
 ./bin/bench -latency continental -iterations 50 -commands 10
 ```
 
+## Regenerating Results
+
+The `results/` directory contains sample JSON output used in the blog
+series. To regenerate after code changes:
+
+```bash
+# All results — netem (requires sudo) + userspace fallback
+make results
+
+# Netem only (requires root / CAP_NET_ADMIN)
+make results-netem
+
+# Userspace only (no root needed)
+make results-userspace
+```
+
+The script (`scripts/generate-results.sh`) runs all latency profiles
+at n=20 with 5 commands, plus regional scaling runs at 1/10/25/50
+commands. Takes about 5-10 minutes for the full set.
+
 ## Adding a Benchmark Mode
 
-1. Add the mode logic in `cmd/bench/main.go` inside the appropriate
-   `benchSSH`, `benchHTTPS`, or `benchProxy` function.
+1. Add the mode logic in `internal/bench/bench.go` inside the
+   appropriate `SSH`, `HTTPS`, or `Proxy` function.
 2. Use `stats.RunParallel` for iteration execution and `stats.Summarize`
    for result collection.
-3. Update the README benchmark modes table.
-4. Run `make test` and `make lint` before submitting.
+3. Add a test in `internal/bench/bench_test.go`.
+4. Update the README benchmark modes table.
+5. Run `make test && make lint` before submitting.
 
 ## Adding a Command Transcript
 

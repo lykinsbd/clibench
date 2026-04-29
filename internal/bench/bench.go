@@ -28,14 +28,14 @@ var LatencyProfiles = map[string]time.Duration{
 
 // Config holds parameters for a benchmark run.
 type Config struct {
-	Addr        string // SSH or HTTPS address
-	User        string
-	Pass        string
-	Iterations  int
-	Concurrency int
-	Commands    int
-	Profile     string
-	RTTms       float64
+	Addr        string // target server address (host:port)
+	User        string // authentication username
+	Pass        string // authentication password
+	Iterations  int    // number of iterations per benchmark mode
+	Concurrency int    // concurrent workers
+	Commands    int    // commands per iteration
+	Profile     string // latency profile name for result labeling
+	RTTms       float64 // simulated round-trip time in milliseconds
 	Hostname    string // device hostname for PTY prompt detection
 }
 
@@ -310,8 +310,8 @@ func HTTPS(c Config) []stats.Result {
 // ProxyConfig extends Config with proxy-specific addresses.
 type ProxyConfig struct {
 	Config
-	FreshAddr  string
-	PooledAddr string
+	FreshAddr  string // HTTPS proxy address (fresh SSH per request)
+	PooledAddr string // HTTPS proxy address (pooled SSH connection)
 }
 
 // Proxy runs all proxy benchmark modes and returns the results.
