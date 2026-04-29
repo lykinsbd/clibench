@@ -20,15 +20,11 @@ jobs:
           go-version-file: go.mod
 
       - name: Extract tag message
-        id: tag
         run: |
-          # Get the annotated tag message (everything after the first line)
-          MSG=$(git tag -l --format='%(contents:body)' "${GITHUB_REF_NAME}")
-          if [[ -z "$MSG" ]]; then
-            MSG=$(git tag -l --format='%(contents:subject)' "${GITHUB_REF_NAME}")
-          fi
-          # Write to file to preserve newlines
-          echo "$MSG" > /tmp/release-notes.md
+          # Get full tag annotation, strip any PGP signature
+          git tag -l --format='%(contents)' "${GITHUB_REF_NAME}" \
+            | sed '/-----BEGIN PGP SIGNATURE-----/,$d' \
+            > /tmp/release-notes.md
           # Append commit list since last tag
           PREV_TAG=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || echo "")
           if [[ -n "$PREV_TAG" ]]; then
