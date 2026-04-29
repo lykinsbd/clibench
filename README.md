@@ -21,14 +21,17 @@ emulates a Cisco IOS-XE device over both:
 - **Proxy** (port 9443) — HTTPS frontend that forwards to an SSH backend,
   simulating the edge proxy pattern
 
-Both transports share the same command engine and transcript responses, so
+All transports share the same command engine and transcript responses, so
 the only variable is the transport protocol itself.
 
 ## Quick Start
 
-Requires Linux with `tc` (iproute2) and root (or `CAP_NET_ADMIN`) for latency injection.
+Requires Go 1.22+ and Linux with `tc` (iproute2). Root (or `CAP_NET_ADMIN`)
+is needed for kernel-level latency injection.
 
 ```bash
+git clone https://github.com/lykinsbd/clibench.git
+cd clibench
 go build -o bin/bench ./cmd/bench/
 
 # Baseline (no latency, no root needed)
@@ -102,7 +105,7 @@ simulation short of running on separate physical hosts.
 Requires root or `CAP_NET_ADMIN`. The tool sets up the qdisc before
 benchmarking and tears it down on exit.
 
-### Fallback: userspace delay injection (-userspace flag)
+### Fallback: userspace delay injection (`-userspace` flag)
 
 For environments where `sudo` isn't available, the `-userspace` flag
 enables an in-process delay model. This wraps each `net.Conn` with a
@@ -148,7 +151,7 @@ structural difference holds regardless of how latency is injected.
 At zero latency (local profile), SSH actually beats HTTPS because the TLS
 handshake has higher CPU overhead than the SSH handshake. The HTTPS
 advantage only appears when network latency dominates, which is the
-scenario the blog series focuses on.
+scenario the [blog series](https://network-notes.com/posts/2026/cli-over-https-1/) focuses on.
 
 ## Sample Results
 
@@ -165,6 +168,7 @@ cmd/
   server/     # Standalone dual-protocol server
   smoketest/  # Quick integration smoke test
 internal/
+  bench/      # Benchmark orchestration (modes, iteration logic)
   device/     # Command engine, prefix matching, transcript loading
   sshserver/  # crypto/ssh server
   httpserver/ # net/http + TLS server (ASA-style API)
@@ -173,6 +177,7 @@ internal/
   proxy/      # HTTPS→SSH edge proxy (fresh + pooled modes)
   stats/      # Benchmark statistics (percentile, summarize, runParallel)
   tlsutil/    # Shared self-signed TLS config generator
+scripts/      # Result generation and helper scripts
 transcripts/  # Canned command output files
 results/      # Sample benchmark output (JSON)
 ```

@@ -1,5 +1,16 @@
 # Contributing to clibench
 
+Contributions are welcome! Please keep PRs focused and be kind in reviews.
+
+## Prerequisites
+
+- Go 1.22+
+- Linux (for `tc netem` latency injection; userspace fallback works anywhere)
+- [golangci-lint](https://golangci-lint.run/) v2:
+  ```bash
+  go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+  ```
+
 ## Development Setup
 
 ```bash
@@ -11,6 +22,8 @@ make test
 
 ## Running Tests
 
+Tests run with the Go race detector enabled and have a 120-second timeout.
+
 ```bash
 # All tests (no root needed)
 make test
@@ -19,7 +32,7 @@ make test
 make test-netem
 
 # Lint
-make lint  # requires golangci-lint v2
+make lint
 ```
 
 ## Running Benchmarks
@@ -69,11 +82,23 @@ commands. Takes about 5-10 minutes for the full set.
 
 Place a `.txt` file in `transcripts/` with underscores replacing spaces
 in the command name. For example, `show_ip_route.txt` maps to the command
-`show ip route`. Use `{{.Hostname}}` for hostname substitution.
+`show ip route`. Use `{{.Hostname}}` (Go `text/template` syntax) for
+hostname substitution. No other template variables are currently supported.
+
+## Commit Messages
+
+Use short, descriptive commit messages prefixed with the affected package
+or area:
+
+```
+netem: fix qdisc teardown on SIGINT
+bench: add pty-reuse mode
+docs: update latency profile table
+```
 
 ## Submitting Changes
 
 1. Fork the repo and create a feature branch.
 2. Make your changes with tests.
 3. Run `make test && make lint`.
-4. Open a pull request against `main`.
+4. Open a [pull request](https://github.com/lykinsbd/clibench/pulls) against `main`.
