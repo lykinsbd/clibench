@@ -1,3 +1,5 @@
+//go:build linux
+
 // Package netem provides tc netem-based latency injection on Linux.
 // Requires CAP_NET_ADMIN (or root). Applies per-port delay on the
 // loopback interface using a prio qdisc with u32 filters, configured
