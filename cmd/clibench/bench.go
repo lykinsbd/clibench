@@ -73,10 +73,12 @@ func (b *BenchCmd) Run() error {
 	headendH3Addr := fmt.Sprintf("localhost:%d", b.HeadendH3Port)
 	tunnelSiteHTTPSPort := b.ProxyPort + 2
 	tunnelSiteHTTPSAddr := fmt.Sprintf("localhost:%d", tunnelSiteHTTPSPort)
+	tunnelSiteH3Port := b.ProxyPort + 3
+	tunnelSiteH3Addr := fmt.Sprintf("localhost:%d", tunnelSiteH3Port)
 	campusDelay := 1 * time.Millisecond
 
 	if !b.Userspace && delay > 0 {
-		wanPorts := []int{b.SSHPort, b.HTTPSPort, b.HTTP3Port, b.ProxyPort, b.ProxyPort + 1, tunnelSiteHTTPSPort}
+		wanPorts := []int{b.SSHPort, b.HTTPSPort, b.HTTP3Port, b.ProxyPort, b.ProxyPort + 1, tunnelSiteHTTPSPort, tunnelSiteH3Port}
 		campusPorts := []int{backendSSHPort, b.HeadendHTTPSPort, b.HeadendH3Port}
 		if err := netem.Setup(delay, campusDelay, wanPorts, campusPorts); err != nil {
 			return fmt.Errorf("tc netem setup (requires sudo): %w", err)
@@ -149,6 +151,10 @@ func (b *BenchCmd) Run() error {
 	// Tunnel: site proxy (HTTPS frontend, WAN delay) → backend SSH (campus delay)
 	startProxy(tunnelSiteHTTPSAddr, backendSSHAddr, true, delay)
 
+	// Tunnel: site proxy HTTP/3 (WAN delay) → backend SSH (campus delay)
+	tunnelSiteH3 := proxy.New(tunnelSiteH3Addr, backendSSHAddr, b.User, b.Pass, true)
+	go tunnelSiteH3.ListenAndServeH3()
+
 	// Tunnel: headend proxies (SSH frontend, campus delay) → site proxy over WAN
 	startHeadend := func(addr, backendURL, transport string, d time.Duration) {
 		ln, err := net.Listen("tcp", addr)
@@ -163,7 +169,7 @@ func (b *BenchCmd) Run() error {
 		go srv.ListenAndServe()
 	}
 	startHeadend(headendHTTPSAddr, fmt.Sprintf("https://%s", tunnelSiteHTTPSAddr), "https", campusDelay)
-	startHeadend(headendH3Addr, fmt.Sprintf("https://%s", tunnelSiteHTTPSAddr), "http3", campusDelay)
+	startHeadend(headendH3Addr, fmt.Sprintf("https://%s", tunnelSiteH3Addr), "http3", campusDelay)
 
 	time.Sleep(500 * time.Millisecond)
 	log.Printf("Server ready — profile=%s, simulated RTT=%.0fms", b.Latency, rttMs)
