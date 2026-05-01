@@ -13,6 +13,7 @@ import (
 
 	"github.com/lykinsbd/clibench/internal/bench"
 	"github.com/lykinsbd/clibench/internal/device"
+	"github.com/lykinsbd/clibench/internal/http3server"
 	"github.com/lykinsbd/clibench/internal/httpserver"
 	latencyPkg "github.com/lykinsbd/clibench/internal/latency"
 	"github.com/lykinsbd/clibench/internal/netem"
@@ -26,9 +27,10 @@ const hostname = "bench-rtr"
 func main() {
 	sshPort := flag.Int("ssh-port", 2222, "SSH listen port (embedded mode)")
 	httpsPort := flag.Int("https-port", 8443, "HTTPS listen port (embedded mode)")
+	http3Port := flag.Int("http3-port", 8444, "HTTP/3 (QUIC) listen port (embedded mode)")
 	user := flag.String("user", "admin", "Username")
 	pass := flag.String("pass", "admin", "Password")
-	transport := flag.String("transport", "both", "Transport: ssh, https, both, proxy")
+	transport := flag.String("transport", "both", "Transport: ssh, https, http3, both, proxy, all")
 	iterations := flag.Int("iterations", 50, "Iterations per test")
 	concurrency := flag.Int("concurrency", 1, "Concurrent workers")
 	commands := flag.Int("commands", 1, "Commands per iteration")
@@ -46,6 +48,7 @@ func main() {
 
 	sshAddr := fmt.Sprintf("localhost:%d", *sshPort)
 	httpsAddr := fmt.Sprintf("localhost:%d", *httpsPort)
+	http3Addr := fmt.Sprintf("localhost:%d", *http3Port)
 
 	dev, err := device.New(hostname, *user, *pass, *transcriptsDir)
 	if err != nil {
@@ -60,7 +63,7 @@ func main() {
 
 	// Set up latency injection
 	if !*userspace && delay > 0 {
-		wanPorts := []int{*sshPort, *httpsPort, *proxyPort, *proxyPort + 1}
+		wanPorts := []int{*sshPort, *httpsPort, *http3Port, *proxyPort, *proxyPort + 1}
 		campusPorts := []int{backendSSHPort}
 		if err := netem.Setup(delay, campusDelay, wanPorts, campusPorts); err != nil {
 			log.Fatalf("tc netem setup (requires sudo): %v", err)
@@ -128,6 +131,10 @@ func main() {
 	startProxy(proxyAddr, backendSSHAddr, false, delay)
 	startProxy(proxyPooledAddr, backendSSHAddr, true, delay)
 
+	// Start HTTP/3 server
+	h3srv := http3server.New(http3Addr, dev)
+	go h3srv.ListenAndServe()
+
 	time.Sleep(500 * time.Millisecond)
 	log.Printf("Server ready — profile=%s, simulated RTT=%.0fms", *profile, rttMs)
 
@@ -144,22 +151,27 @@ func main() {
 
 	var results []stats.Result
 
-	if *transport == "ssh" || *transport == "both" {
+	if *transport == "ssh" || *transport == "both" || *transport == "all" {
 		c := cfg
 		c.Addr = sshAddr
 		results = append(results, bench.SSH(c)...)
 	}
-	if *transport == "https" || *transport == "both" {
+	if *transport == "https" || *transport == "both" || *transport == "all" {
 		c := cfg
 		c.Addr = httpsAddr
 		results = append(results, bench.HTTPS(c)...)
 	}
-	if *transport == "proxy" || *transport == "both" {
+	if *transport == "proxy" || *transport == "both" || *transport == "all" {
 		results = append(results, bench.Proxy(bench.ProxyConfig{
 			Config:     cfg,
 			FreshAddr:  proxyAddr,
 			PooledAddr: proxyPooledAddr,
 		})...)
+	}
+	if *transport == "http3" || *transport == "all" {
+		c := cfg
+		c.Addr = http3Addr
+		results = append(results, bench.HTTP3(c)...)
 	}
 
 	enc := json.NewEncoder(os.Stdout)

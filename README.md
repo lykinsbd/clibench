@@ -7,17 +7,19 @@
 SSH vs HTTPS CLI transport benchmark. Companion code for the
 [CLI Over HTTPS](https://network-notes.com/posts/2026/cli-over-https-1/)
 blog series on network-notes.com. Measures the performance difference between
-SSH and HTTPS as CLI transports for network device automation at scale.
+SSH, HTTPS, and HTTP/3 (QUIC) as CLI transports for network device automation at scale.
 
 ## What This Does
 
-A dual-protocol network device emulator and benchmark client. The server
-emulates a Cisco IOS-XE device over both:
+A multi-protocol network device emulator and benchmark client. The server
+emulates a Cisco IOS-XE device over:
 
 - **SSH** (port 2222) — `crypto/ssh` with exec mode, following
   [CiSSHGo](https://github.com/tbotnz/cisshgo) patterns
 - **HTTPS** (port 8443) — TLS 1.3 + ASA-style HTTP interface
   (`/admin/exec/`, `/admin/config`)
+- **HTTP/3** (port 8444/udp) — QUIC + HTTP/3 with the same ASA-style
+  endpoints, including 0-RTT session resumption support
 - **Proxy** (port 9443) — HTTPS frontend that forwards to an SSH backend,
   simulating the edge proxy pattern
 
@@ -46,6 +48,12 @@ sudo ./bin/bench -latency intercontinental -iterations 20 -commands 5
 # Proxy mode only
 sudo ./bin/bench -latency regional -iterations 20 -commands 5 -transport proxy
 
+# HTTP/3 (QUIC) mode only
+sudo ./bin/bench -latency regional -iterations 20 -commands 5 -transport http3
+
+# All transports (SSH + HTTPS + proxy + HTTP/3)
+sudo ./bin/bench -latency regional -iterations 20 -commands 5 -transport all
+
 # Fallback: userspace delay injection (no root, less accurate)
 ./bin/bench -latency regional -iterations 20 -commands 5 -userspace
 ```
@@ -67,6 +75,10 @@ Output is JSON to stdout. Logs go to stderr.
 | `multi-cmd` | HTTPS | All commands in one GET (ASA `/cmd1/cmd2` syntax) |
 | `fresh-ssh` | Proxy | HTTPS→proxy→fresh SSH per request |
 | `pooled-ssh` | Proxy | HTTPS→proxy→pooled SSH connection |
+| `fresh-conn` | HTTP/3 | New QUIC + HTTP/3 connection per iteration |
+| `keep-alive` | HTTP/3 | Shared QUIC connection across all iterations |
+| `batch-post` | HTTP/3 | All commands in one POST body over shared connection |
+| `0rtt-resumption` | HTTP/3 | QUIC 0-RTT session resumption (send data in first packet) |
 
 ## Latency Profiles
 
@@ -91,7 +103,7 @@ entirely via the [`vishvananda/netlink`](https://github.com/vishvananda/netlink)
 library (the same netlink library used by Docker and Kubernetes) — no
 shell-out to `tc`. A `prio` qdisc routes traffic by port:
 
-- **WAN ports** (SSH, HTTPS, proxy frontend): configured one-way delay
+- **WAN ports** (SSH, HTTPS, HTTP/3, proxy frontend): configured one-way delay
   (e.g., 15ms for 30ms RTT)
 - **Campus port** (proxy backend SSH): fixed 1ms one-way delay (2ms RTT),
   simulating a co-located proxy
@@ -172,6 +184,7 @@ internal/
   device/     # Command engine, prefix matching, transcript loading
   sshserver/  # crypto/ssh server
   httpserver/ # net/http + TLS server (ASA-style API)
+  http3server/ # HTTP/3 (QUIC) server (same ASA-style API over QUIC)
   latency/    # Userspace delay injection (fallback, -userspace flag)
   netem/      # tc netem setup via netlink (default, requires root)
   proxy/      # HTTPS→SSH edge proxy (fresh + pooled modes)
@@ -204,7 +217,7 @@ sudo go test -race -v -tags netem_root ./internal/netem/
 ### Test Coverage
 
 Every package has unit tests. Integration tests in `internal/` verify
-backend equivalence (SSH, HTTPS, and proxy return identical output for the
+backend equivalence (SSH, HTTPS, HTTP/3, and proxy return identical output for the
 same commands), concurrent session handling, and connection pooling modes.
 Statistics functions (`internal/stats`) are tested against known values
 including sample standard deviation (Bessel's correction).
