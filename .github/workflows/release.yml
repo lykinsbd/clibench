@@ -42,10 +42,8 @@ jobs:
             for GOARCH in amd64 arm64; do
               DIR="clibench-${VERSION}-${GOOS}-${GOARCH}"
               mkdir -p "dist/${DIR}"
-              for CMD in bench server smoketest; do
-                GOOS=$GOOS GOARCH=$GOARCH go build -ldflags "$LDFLAGS" \
-                  -o "dist/${DIR}/${CMD}" ./cmd/${CMD}
-              done
+              GOOS=$GOOS GOARCH=$GOARCH go build -ldflags "$LDFLAGS" \
+                -o "dist/${DIR}/clibench" ./cmd/clibench
               cp LICENSE README.md "dist/${DIR}/"
               tar -czf "dist/${DIR}.tar.gz" -C dist "${DIR}"
             done

@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"log"
 	"net"
@@ -22,51 +21,56 @@ import (
 	"github.com/lykinsbd/clibench/internal/stats"
 )
 
+// BenchCmd runs transport benchmarks.
+type BenchCmd struct {
+	Transport   string `help:"Transport to benchmark." enum:"ssh,https,http3,proxy,all" default:"all" short:"t"`
+	Iterations  int    `help:"Iterations per benchmark mode." default:"50" short:"n"`
+	Concurrency int    `help:"Concurrent workers." default:"1" short:"c"`
+	Commands    int    `help:"Commands per iteration." default:"1"`
+	Latency     string `help:"Latency profile." enum:"local,campus,regional,continental,intercontinental,transpacific" default:"local" short:"l"`
+	Userspace   bool   `help:"Use userspace latency injection (no root required)."`
+	Output      string `help:"Output format." enum:"json,table,csv" default:"json" short:"o"`
+
+	SSHPort   int `help:"SSH listen port." default:"2222" group:"server"`
+	HTTPSPort int `help:"HTTPS listen port." default:"8443" group:"server"`
+	HTTP3Port int `help:"HTTP/3 listen port." default:"8444" group:"server"`
+	ProxyPort int `help:"Proxy listen port." default:"9443" group:"server"`
+
+	User        string `help:"Username." default:"admin" short:"u"`
+	Pass        string `help:"Password." default:"admin" short:"p"`
+	Transcripts string `help:"Transcript directory." default:"transcripts"`
+}
+
 const hostname = "bench-rtr"
 
-func main() {
-	sshPort := flag.Int("ssh-port", 2222, "SSH listen port (embedded mode)")
-	httpsPort := flag.Int("https-port", 8443, "HTTPS listen port (embedded mode)")
-	http3Port := flag.Int("http3-port", 8444, "HTTP/3 (QUIC) listen port (embedded mode)")
-	user := flag.String("user", "admin", "Username")
-	pass := flag.String("pass", "admin", "Password")
-	transport := flag.String("transport", "both", "Transport: ssh, https, http3, both, proxy, all")
-	iterations := flag.Int("iterations", 50, "Iterations per test")
-	concurrency := flag.Int("concurrency", 1, "Concurrent workers")
-	commands := flag.Int("commands", 1, "Commands per iteration")
-	profile := flag.String("latency", "local", "Latency profile")
-	proxyPort := flag.Int("proxy-port", 9443, "Proxy HTTPS listen port")
-	transcriptsDir := flag.String("transcripts", "transcripts", "Transcript dir")
-	userspace := flag.Bool("userspace", false, "Use userspace latency injection instead of tc netem (no root required)")
-	flag.Parse()
-
-	delay, ok := bench.LatencyProfiles[*profile]
+// Run executes the benchmark.
+func (b *BenchCmd) Run() error {
+	delay, ok := bench.LatencyProfiles[b.Latency]
 	if !ok {
-		log.Fatalf("unknown latency profile %q", *profile)
+		return fmt.Errorf("unknown latency profile %q", b.Latency)
 	}
 	rttMs := float64(delay.Milliseconds()) * 2
 
-	sshAddr := fmt.Sprintf("localhost:%d", *sshPort)
-	httpsAddr := fmt.Sprintf("localhost:%d", *httpsPort)
-	http3Addr := fmt.Sprintf("localhost:%d", *http3Port)
+	sshAddr := fmt.Sprintf("localhost:%d", b.SSHPort)
+	httpsAddr := fmt.Sprintf("localhost:%d", b.HTTPSPort)
+	http3Addr := fmt.Sprintf("localhost:%d", b.HTTP3Port)
 
-	dev, err := device.New(hostname, *user, *pass, *transcriptsDir)
+	dev, err := device.New(hostname, b.User, b.Pass, b.Transcripts)
 	if err != nil {
-		log.Fatalf("device: %v", err)
+		return fmt.Errorf("device: %w", err)
 	}
 
-	backendSSHPort := *sshPort + 1000
+	backendSSHPort := b.SSHPort + 1000
 	backendSSHAddr := fmt.Sprintf("localhost:%d", backendSSHPort)
-	proxyAddr := fmt.Sprintf("localhost:%d", *proxyPort)
-	proxyPooledAddr := fmt.Sprintf("localhost:%d", *proxyPort+1)
+	proxyAddr := fmt.Sprintf("localhost:%d", b.ProxyPort)
+	proxyPooledAddr := fmt.Sprintf("localhost:%d", b.ProxyPort+1)
 	campusDelay := 1 * time.Millisecond
 
-	// Set up latency injection
-	if !*userspace && delay > 0 {
-		wanPorts := []int{*sshPort, *httpsPort, *http3Port, *proxyPort, *proxyPort + 1}
+	if !b.Userspace && delay > 0 {
+		wanPorts := []int{b.SSHPort, b.HTTPSPort, b.HTTP3Port, b.ProxyPort, b.ProxyPort + 1}
 		campusPorts := []int{backendSSHPort}
 		if err := netem.Setup(delay, campusDelay, wanPorts, campusPorts); err != nil {
-			log.Fatalf("tc netem setup (requires sudo): %v", err)
+			return fmt.Errorf("tc netem setup (requires sudo): %w", err)
 		}
 		defer netem.Teardown()
 
@@ -80,18 +84,17 @@ func main() {
 
 		log.Printf("tc netem: %dms one-way on ports %v, %dms on ports %v",
 			delay.Milliseconds(), wanPorts, campusDelay.Milliseconds(), campusPorts)
-	} else if *userspace && delay > 0 {
+	} else if b.Userspace && delay > 0 {
 		log.Printf("Using userspace latency injection (less accurate than tc netem)")
 	}
 
 	wrapListener := func(ln net.Listener, d time.Duration) net.Listener {
-		if *userspace && d > 0 {
+		if b.Userspace && d > 0 {
 			return &latencyPkg.Listener{Listener: ln, Delay: d}
 		}
 		return ln
 	}
 
-	// Start servers
 	startSSH := func(addr string, d time.Duration) {
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
@@ -120,7 +123,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("listen %s: %v", addr, err)
 		}
-		p := proxy.New(addr, backend, *user, *pass, pooled)
+		p := proxy.New(addr, backend, b.User, b.Pass, pooled)
 		p.SetListener(wrapListener(ln, d))
 		go p.ListenAndServeTLS()
 	}
@@ -131,52 +134,62 @@ func main() {
 	startProxy(proxyAddr, backendSSHAddr, false, delay)
 	startProxy(proxyPooledAddr, backendSSHAddr, true, delay)
 
-	// Start HTTP/3 server
 	h3srv := http3server.New(http3Addr, dev)
 	go h3srv.ListenAndServe()
 
 	time.Sleep(500 * time.Millisecond)
-	log.Printf("Server ready — profile=%s, simulated RTT=%.0fms", *profile, rttMs)
+	log.Printf("Server ready — profile=%s, simulated RTT=%.0fms", b.Latency, rttMs)
 
 	cfg := bench.Config{
-		User:        *user,
-		Pass:        *pass,
-		Iterations:  *iterations,
-		Concurrency: *concurrency,
-		Commands:    *commands,
-		Profile:     *profile,
+		User:        b.User,
+		Pass:        b.Pass,
+		Iterations:  b.Iterations,
+		Concurrency: b.Concurrency,
+		Commands:    b.Commands,
+		Profile:     b.Latency,
 		RTTms:       rttMs,
 		Hostname:    hostname,
 	}
 
 	var results []stats.Result
 
-	if *transport == "ssh" || *transport == "both" || *transport == "all" {
+	if b.Transport == "ssh" || b.Transport == "all" {
 		c := cfg
 		c.Addr = sshAddr
 		results = append(results, bench.SSH(c)...)
 	}
-	if *transport == "https" || *transport == "both" || *transport == "all" {
+	if b.Transport == "https" || b.Transport == "all" {
 		c := cfg
 		c.Addr = httpsAddr
 		results = append(results, bench.HTTPS(c)...)
 	}
-	if *transport == "proxy" || *transport == "both" || *transport == "all" {
+	if b.Transport == "proxy" || b.Transport == "all" {
 		results = append(results, bench.Proxy(bench.ProxyConfig{
 			Config:     cfg,
 			FreshAddr:  proxyAddr,
 			PooledAddr: proxyPooledAddr,
 		})...)
 	}
-	if *transport == "http3" || *transport == "all" {
+	if b.Transport == "http3" || b.Transport == "all" {
 		c := cfg
 		c.Addr = http3Addr
 		results = append(results, bench.HTTP3(c)...)
 	}
 
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(results); err != nil {
-		log.Fatalf("json encode: %v", err)
+	return outputResults(results, b.Output)
+}
+
+func outputResults(results []stats.Result, format string) error {
+	switch format {
+	case "json":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(results)
+	case "table":
+		return writeTable(os.Stdout, results)
+	case "csv":
+		return writeCSV(os.Stdout, results)
+	default:
+		return fmt.Errorf("unknown output format %q", format)
 	}
 }

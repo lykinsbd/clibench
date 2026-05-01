@@ -1,9 +1,7 @@
 .PHONY: build test test-netem lint bench-local bench-regional clean
 
 build:
-	go build -o bin/bench ./cmd/bench
-	go build -o bin/server ./cmd/server
-	go build -o bin/smoketest ./cmd/smoketest
+	go build -o bin/clibench ./cmd/clibench
 
 test:
 	go test -race -count=1 -timeout 120s ./...
@@ -15,10 +13,10 @@ lint:
 	golangci-lint run
 
 bench-local: build
-	./bin/bench -latency local -iterations 20 -commands 5
+	./bin/clibench bench --latency local --iterations 20 --commands 5
 
 bench-regional: build ## Requires root for tc netem
-	sudo ./bin/bench -latency regional -iterations 20 -commands 5
+	sudo ./bin/clibench bench --latency regional --iterations 20 --commands 5
 
 results: build ## Regenerate all benchmark results (netem + userspace)
 	./scripts/generate-results.sh all

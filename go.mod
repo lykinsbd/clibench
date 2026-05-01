@@ -3,6 +3,7 @@ module github.com/lykinsbd/clibench
 go 1.26.2
 
 require (
+	github.com/alecthomas/kong v1.10.0
 	github.com/quic-go/quic-go v0.50.0
 	github.com/vishvananda/netlink v1.3.1
 	golang.org/x/crypto v0.50.0
