@@ -58,6 +58,6 @@ func TestTunnel(t *testing.T) {
 		HTTPSHeadendAddr: httpsAddr,
 		H3HeadendAddr:    h3Addr,
 	})
-	// ssh-https-ssh, ssh-https-ssh-batch, ssh-h3-ssh, ssh-h3-ssh-batch = 4 modes
+	// ssh-https-ssh, ssh-https-ssh-batch, ssh-http3-ssh, ssh-http3-ssh-batch = 4 modes
 	assertResults(t, results, "tunnel", 4)
 }
