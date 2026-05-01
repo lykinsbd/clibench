@@ -8,14 +8,14 @@ set -euo pipefail
 #   ./scripts/generate-results.sh netem    # netem only (requires sudo)
 #   ./scripts/generate-results.sh userspace # userspace only (no sudo)
 
-BENCH="./bin/bench"
+BENCH="./bin/clibench"
 RESULTS="results"
 ITERATIONS=20
 MODE="${1:-all}"
 
 if [[ ! -x "$BENCH" ]]; then
-    echo "Building bench binary..."
-    go build -o "$BENCH" ./cmd/bench
+    echo "Building clibench binary..."
+    go build -o "$BENCH" ./cmd/clibench
 fi
 
 mkdir -p "$RESULTS"
@@ -24,14 +24,14 @@ run_netem() {
     echo "=== Netem runs (requires sudo) ==="
     for profile in local campus regional continental intercontinental; do
         echo "  netem $profile 5cmd..."
-        sudo "$BENCH" -latency "$profile" -iterations "$ITERATIONS" -commands 5 \
+        sudo "$BENCH" bench --transport all --latency "$profile" --iterations "$ITERATIONS" --commands 5 \
             > "$RESULTS/netem-${profile}-${ITERATIONS}iter-5cmd.json"
     done
 
     echo "  netem regional scaling..."
     for cmds in 1 10 25 50; do
         echo "  netem regional ${cmds}cmd..."
-        sudo "$BENCH" -latency regional -iterations "$ITERATIONS" -commands "$cmds" \
+        sudo "$BENCH" bench --transport all --latency regional --iterations "$ITERATIONS" --commands "$cmds" \
             > "$RESULTS/netem-regional-${ITERATIONS}iter-${cmds}cmd.json"
     done
 }
@@ -40,14 +40,14 @@ run_userspace() {
     echo "=== Userspace runs ==="
     for profile in local campus regional continental intercontinental; do
         echo "  userspace $profile 5cmd..."
-        "$BENCH" -latency "$profile" -iterations "$ITERATIONS" -commands 5 -userspace \
+        "$BENCH" bench --transport all --latency "$profile" --iterations "$ITERATIONS" --commands 5 --userspace \
             > "$RESULTS/${profile}-${ITERATIONS}iter-5cmd.json"
     done
 
     echo "  userspace regional scaling..."
     for cmds in 1 10 25 50; do
         echo "  userspace regional ${cmds}cmd..."
-        "$BENCH" -latency regional -iterations "$ITERATIONS" -commands "$cmds" -userspace \
+        "$BENCH" bench --transport all --latency regional --iterations "$ITERATIONS" --commands "$cmds" --userspace \
             > "$RESULTS/regional-${ITERATIONS}iter-${cmds}cmd.json"
     done
 }

@@ -34,28 +34,34 @@ is needed for kernel-level latency injection.
 ```bash
 git clone https://github.com/lykinsbd/clibench.git
 cd clibench
-go build -o bin/bench ./cmd/bench/
+go build -o bin/clibench ./cmd/clibench/
 
 # Baseline (no latency, no root needed)
-./bin/bench -latency local -iterations 50 -commands 5
+./bin/clibench bench --latency local --iterations 50 --commands 5
 
 # Simulated US backbone (30ms RTT, requires root)
-sudo ./bin/bench -latency regional -iterations 20 -commands 5
+sudo ./bin/clibench bench --latency regional --iterations 20 --commands 5
 
 # Simulated US↔Hong Kong (150ms RTT)
-sudo ./bin/bench -latency intercontinental -iterations 20 -commands 5
+sudo ./bin/clibench bench --latency intercontinental --iterations 20 --commands 5
 
-# Proxy mode only
-sudo ./bin/bench -latency regional -iterations 20 -commands 5 -transport proxy
+# Single transport
+sudo ./bin/clibench bench --latency regional --iterations 20 --commands 5 --transport http3
 
-# HTTP/3 (QUIC) mode only
-sudo ./bin/bench -latency regional -iterations 20 -commands 5 -transport http3
+# Table output for quick comparison
+./bin/clibench bench --latency local --iterations 20 --commands 5 --output table
 
-# All transports (SSH + HTTPS + proxy + HTTP/3)
-sudo ./bin/bench -latency regional -iterations 20 -commands 5 -transport all
+# CSV output for spreadsheet import
+./bin/clibench bench --latency local --iterations 20 --commands 5 --output csv
 
 # Fallback: userspace delay injection (no root, less accurate)
-./bin/bench -latency regional -iterations 20 -commands 5 -userspace
+./bin/clibench bench --latency regional --iterations 20 --commands 5 --userspace
+
+# Standalone server (SSH + HTTPS + HTTP/3)
+./bin/clibench server
+
+# Quick smoke test
+./bin/clibench smoketest
 ```
 
 Output is JSON to stdout. Logs go to stderr.
@@ -117,9 +123,9 @@ simulation short of running on separate physical hosts.
 Requires root or `CAP_NET_ADMIN`. The tool sets up the qdisc before
 benchmarking and tears it down on exit.
 
-### Fallback: userspace delay injection (`-userspace` flag)
+### Fallback: userspace delay injection (`--userspace` flag)
 
-For environments where `sudo` isn't available, the `-userspace` flag
+For environments where `sudo` isn't available, the `--userspace` flag
 enables an in-process delay model. This wraps each `net.Conn` with a
 wrapper that sleeps on direction changes (read→write or write→read).
 
@@ -176,9 +182,7 @@ published numbers.
 
 ```
 cmd/
-  bench/      # Benchmark client (embeds its own server)
-  server/     # Standalone dual-protocol server
-  smoketest/  # Quick integration smoke test
+  clibench/   # Single CLI binary (bench, server, smoketest subcommands)
 internal/
   bench/      # Benchmark orchestration (modes, iteration logic)
   device/     # Command engine, prefix matching, transcript loading

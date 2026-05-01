@@ -42,10 +42,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Build
-        run: |
-          go build -o /dev/null ./cmd/bench
-          go build -o /dev/null ./cmd/server
-          go build -o /dev/null ./cmd/smoketest
+        run: go build -o /dev/null ./cmd/clibench
 
   coverage:
     runs-on: ubuntu-latest
