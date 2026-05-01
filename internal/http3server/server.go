@@ -3,6 +3,7 @@
 package http3server
 
 import (
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -108,7 +109,7 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 		out.WriteString(s.dev.Exec(cmd))
 	}
 	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte(out.String()))
+	io.WriteString(w, out.String())
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -136,5 +137,5 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		out.WriteString(s.dev.Exec(cmd))
 	}
 	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte(out.String()))
+	io.WriteString(w, out.String())
 }
