@@ -23,13 +23,13 @@ import (
 
 // BenchCmd runs transport benchmarks.
 type BenchCmd struct {
-	Transport   string `help:"Transport to benchmark." enum:"ssh,https,http3,proxy,all" default:"all" short:"t"`
+	Transport   string `help:"Transport to benchmark (${enum})." enum:"ssh,https,http3,proxy,all" default:"all" short:"t"`
 	Iterations  int    `help:"Iterations per benchmark mode." default:"50" short:"n"`
 	Concurrency int    `help:"Concurrent workers." default:"1" short:"c"`
 	Commands    int    `help:"Commands per iteration." default:"1"`
-	Latency     string `help:"Latency profile." enum:"local,campus,regional,continental,intercontinental,transpacific" default:"local" short:"l"`
+	Latency     string `help:"Latency profile (${enum})." enum:"local,campus,regional,continental,intercontinental,transpacific" default:"local" short:"l"`
 	Userspace   bool   `help:"Use userspace latency injection (no root required)."`
-	Output      string `help:"Output format." enum:"json,table,csv" default:"json" short:"o"`
+	Output      string `help:"Output format (${enum})." enum:"json,table,csv" default:"json" short:"o"`
 
 	SSHPort   int `help:"SSH listen port." default:"2222" group:"server"`
 	HTTPSPort int `help:"HTTPS listen port." default:"8443" group:"server"`
