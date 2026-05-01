@@ -26,7 +26,7 @@ linters:
       # Fire-and-forget server goroutines in cmd/ entrypoints
       - linters:
           - errcheck
-        source: "go .+\\.(ListenAndServe|ListenAndServeTLS)\\(\\)"
+        source: "go .+\\.(ListenAndServe|ListenAndServeTLS|ListenAndServeH3)\\(\\)"
     paths:
       - third_party$
       - builtin$

@@ -18,6 +18,9 @@ import (
 
 	"github.com/lykinsbd/clibench/internal/tlsutil"
 	"golang.org/x/crypto/ssh"
+
+	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/http3"
 )
 
 // Server is an HTTPS proxy that forwards commands to a backend SSH device.
@@ -31,6 +34,7 @@ type Server struct {
 	mu          sync.Mutex
 	pool        *ssh.Client
 	listener    net.Listener
+	packetConn  net.PacketConn
 	srv         *http.Server
 }
 
@@ -218,4 +222,35 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/plain")
 	io.WriteString(w, out)
+}
+
+// SetPacketConn sets a custom net.PacketConn for HTTP/3 serving.
+func (s *Server) SetPacketConn(conn net.PacketConn) { s.packetConn = conn }
+
+// ListenAndServeH3 starts the proxy as an HTTP/3 server.
+func (s *Server) ListenAndServeH3() error {
+	tlsCfg, err := tlsutil.SelfSignedConfig()
+	if err != nil {
+		return err
+	}
+	tlsCfg.NextProtos = []string{"h3"}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/admin/exec/", s.handleExec)
+	mux.HandleFunc("/admin/config", s.handleConfig)
+
+	h3srv := &http3.Server{
+		Handler:   s.authMiddleware(mux),
+		TLSConfig: tlsCfg,
+		QUICConfig: &quic.Config{Allow0RTT: true},
+	}
+
+	if s.packetConn == nil {
+		s.packetConn, err = net.ListenPacket("udp", s.addr)
+		if err != nil {
+			return err
+		}
+	}
+	log.Printf("Proxy HTTP/3 listening on %s → SSH backend %s (pooled=%v)", s.packetConn.LocalAddr(), s.backendAddr, s.pooled)
+	return h3srv.Serve(s.packetConn)
 }
