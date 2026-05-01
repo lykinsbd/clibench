@@ -29,7 +29,7 @@ func Tunnel(c TunnelConfig) []stats.Result {
 
 	// HTTP/3 tunnel modes
 	if c.H3HeadendAddr != "" {
-		results = append(results, tunnelFresh(cfg, c, c.H3HeadendAddr, "tunnel", "ssh-h3-ssh")...)
+		results = append(results, tunnelFresh(cfg, c, c.H3HeadendAddr, "tunnel", "ssh-http3-ssh")...)
 	}
 
 	return results

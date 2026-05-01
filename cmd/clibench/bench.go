@@ -24,7 +24,7 @@ import (
 
 // BenchCmd runs transport benchmarks.
 type BenchCmd struct {
-	Transport   []string `help:"Transports to benchmark (${enum}). Comma-separated or repeated." enum:"ssh,https,http3,proxy,tunnel-https,tunnel-h3,all" default:"all" short:"t"`
+	Transport   []string `help:"Transports to benchmark (${enum}). Comma-separated or repeated." enum:"ssh,https,http3,proxy,tunnel-https,tunnel-http3,all" default:"all" short:"t"`
 	Iterations  int      `help:"Iterations per benchmark mode." default:"50" short:"n"`
 	Concurrency int      `help:"Concurrent workers." default:"1" short:"c"`
 	Commands    int      `help:"Commands per iteration." default:"1"`
@@ -222,7 +222,7 @@ func (b *BenchCmd) Run() error {
 			HTTPSHeadendAddr: headendHTTPSAddr,
 		})...)
 	}
-	if b.has("tunnel-h3") {
+	if b.has("tunnel-http3") {
 		results = append(results, bench.Tunnel(bench.TunnelConfig{
 			Config:        cfg,
 			H3HeadendAddr: headendH3Addr,

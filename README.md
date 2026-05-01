@@ -90,8 +90,8 @@ Output is JSON to stdout. Logs go to stderr.
 | `0rtt-resumption` | HTTP/3 | QUIC 0-RTT session resumption (send data in first packet) |
 | `ssh-https-ssh` | Tunnel | SSH→headend→HTTPS(WAN)→site→SSH→device |
 | `ssh-https-ssh-batch` | Tunnel | Same with all commands in one SSH exec payload |
-| `ssh-h3-ssh` | Tunnel | SSH→headend→HTTP/3(WAN)→site→SSH→device |
-| `ssh-h3-ssh-batch` | Tunnel | Same with all commands in one SSH exec payload |
+| `ssh-http3-ssh` | Tunnel | SSH→headend→HTTP/3(WAN)→site→SSH→device |
+| `ssh-http3-ssh-batch` | Tunnel | Same with all commands in one SSH exec payload |
 
 ## Latency Profiles
 
