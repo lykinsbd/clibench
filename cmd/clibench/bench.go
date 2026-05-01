@@ -24,22 +24,20 @@ import (
 
 // BenchCmd runs transport benchmarks.
 type BenchCmd struct {
-	Transport   string `help:"Transport to benchmark (${enum})." enum:"ssh,https,http3,proxy,tunnel,all" default:"all" short:"t"`
-	Iterations  int    `help:"Iterations per benchmark mode." default:"50" short:"n"`
-	Concurrency int    `help:"Concurrent workers." default:"1" short:"c"`
-	Commands    int    `help:"Commands per iteration." default:"1"`
-	Latency     string `help:"Latency profile (${enum})." enum:"local,campus,regional,continental,intercontinental,transpacific" default:"local" short:"l"`
-	Userspace   bool   `help:"Use userspace latency injection (no root required)."`
-	Output      string `help:"Output format (${enum})." enum:"json,table,csv" default:"json" short:"o"`
+	Transport   []string `help:"Transports to benchmark (${enum}). Comma-separated or repeated." enum:"ssh,https,http3,proxy,tunnel-https,tunnel-h3,all" default:"all" short:"t"`
+	Iterations  int      `help:"Iterations per benchmark mode." default:"50" short:"n"`
+	Concurrency int      `help:"Concurrent workers." default:"1" short:"c"`
+	Commands    int      `help:"Commands per iteration." default:"1"`
+	Latency     string   `help:"Latency profile (${enum})." enum:"local,campus,regional,continental,intercontinental,transpacific" default:"local" short:"l"`
+	Userspace   bool     `help:"Use userspace latency injection (no root required)."`
+	Output      string   `help:"Output format (${enum})." enum:"json,table,csv" default:"json" short:"o"`
 
-	SSHPort              int `help:"SSH listen port." default:"2222" group:"server"`
-	HTTPSPort            int `help:"HTTPS listen port." default:"8443" group:"server"`
-	HTTP3Port            int `help:"HTTP/3 listen port." default:"8444" group:"server"`
-	ProxyPort            int `help:"Proxy listen port." default:"9443" group:"server"`
-	HeadendHTTPSPort     int `help:"Headend proxy SSH port (HTTPS WAN)." default:"2223" group:"server"`
-	HeadendH3Port        int `help:"Headend proxy SSH port (HTTP/3 WAN)." default:"2224" group:"server"`
-	TunnelEdgeHTTPSPort int `help:"Tunnel edge proxy SSH port (HTTPS WAN)." default:"2223" group:"server"`
-	TunnelEdgeH3Port    int `help:"Tunnel edge proxy SSH port (HTTP/3 WAN)." default:"2224" group:"server"`
+	SSHPort          int `help:"SSH listen port." default:"2222" group:"server"`
+	HTTPSPort        int `help:"HTTPS listen port." default:"8443" group:"server"`
+	HTTP3Port        int `help:"HTTP/3 listen port." default:"8444" group:"server"`
+	ProxyPort        int `help:"Proxy listen port." default:"9443" group:"server"`
+	HeadendHTTPSPort int `help:"Headend proxy SSH port (HTTPS WAN)." default:"2223" group:"server"`
+	HeadendH3Port    int `help:"Headend proxy SSH port (HTTP/3 WAN)." default:"2224" group:"server"`
 
 	User        string `help:"Username." default:"admin" short:"u"`
 	Pass        string `help:"Password." default:"admin" short:"p"`
@@ -47,6 +45,15 @@ type BenchCmd struct {
 }
 
 const hostname = "bench-rtr"
+
+func (b *BenchCmd) has(t string) bool {
+	for _, v := range b.Transport {
+		if v == t || v == "all" {
+			return true
+		}
+	}
+	return false
+}
 
 // Run executes the benchmark.
 func (b *BenchCmd) Run() error {
@@ -187,33 +194,38 @@ func (b *BenchCmd) Run() error {
 
 	var results []stats.Result
 
-	if b.Transport == "ssh" || b.Transport == "all" {
+	if b.has("ssh") {
 		c := cfg
 		c.Addr = sshAddr
 		results = append(results, bench.SSH(c)...)
 	}
-	if b.Transport == "https" || b.Transport == "all" {
+	if b.has("https") {
 		c := cfg
 		c.Addr = httpsAddr
 		results = append(results, bench.HTTPS(c)...)
 	}
-	if b.Transport == "proxy" || b.Transport == "all" {
+	if b.has("proxy") {
 		results = append(results, bench.Proxy(bench.ProxyConfig{
 			Config:     cfg,
 			FreshAddr:  proxyAddr,
 			PooledAddr: proxyPooledAddr,
 		})...)
 	}
-	if b.Transport == "http3" || b.Transport == "all" {
+	if b.has("http3") {
 		c := cfg
 		c.Addr = http3Addr
 		results = append(results, bench.HTTP3(c)...)
 	}
-	if b.Transport == "tunnel" || b.Transport == "all" {
+	if b.has("tunnel-https") {
 		results = append(results, bench.Tunnel(bench.TunnelConfig{
 			Config:           cfg,
 			HTTPSHeadendAddr: headendHTTPSAddr,
-			H3HeadendAddr:    headendH3Addr,
+		})...)
+	}
+	if b.has("tunnel-h3") {
+		results = append(results, bench.Tunnel(bench.TunnelConfig{
+			Config:        cfg,
+			H3HeadendAddr: headendH3Addr,
 		})...)
 	}
 
