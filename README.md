@@ -22,6 +22,9 @@ emulates a Cisco IOS-XE device over:
   endpoints, including 0-RTT session resumption support
 - **Proxy** (port 9443) — HTTPS frontend that forwards to an SSH backend,
   simulating the edge proxy pattern
+- **Tunnel** (headend + site proxy pair) — SSH-to-HTTP transparent WAN
+  tunnel where both automation and device speak SSH, but the WAN segment
+  uses HTTPS or HTTP/3 for fewer round trips
 
 All transports share the same command engine and transcript responses, so
 the only variable is the transport protocol itself.
@@ -85,6 +88,10 @@ Output is JSON to stdout. Logs go to stderr.
 | `keep-alive` | HTTP/3 | Shared QUIC connection across all iterations |
 | `batch-post` | HTTP/3 | All commands in one POST body over shared connection |
 | `0rtt-resumption` | HTTP/3 | QUIC 0-RTT session resumption (send data in first packet) |
+| `ssh-https-ssh` | Tunnel | SSH→headend→HTTPS(WAN)→site→SSH→device |
+| `ssh-https-ssh-batch` | Tunnel | Same with all commands in one SSH exec payload |
+| `ssh-http3-ssh` | Tunnel | SSH→headend→HTTP/3(WAN)→site→SSH→device |
+| `ssh-http3-ssh-batch` | Tunnel | Same with all commands in one SSH exec payload |
 
 ## Latency Profiles
 
@@ -189,7 +196,8 @@ internal/
   sshserver/  # crypto/ssh server
   httpserver/ # net/http + TLS server (ASA-style API)
   http3server/ # HTTP/3 (QUIC) server (same ASA-style API over QUIC)
-  latency/    # Userspace delay injection (fallback, -userspace flag)
+  headend/    # SSH→HTTP headend proxy (tunnel automation side)
+  latency/    # Userspace delay injection (fallback, --userspace flag)
   netem/      # tc netem setup via netlink (default, requires root)
   proxy/      # HTTPS→SSH edge proxy (fresh + pooled modes)
   stats/      # Benchmark statistics (percentile, summarize, runParallel)

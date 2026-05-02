@@ -12,6 +12,7 @@ import (
 
 	"github.com/lykinsbd/clibench/internal/bench"
 	"github.com/lykinsbd/clibench/internal/device"
+	"github.com/lykinsbd/clibench/internal/headend"
 	"github.com/lykinsbd/clibench/internal/http3server"
 	"github.com/lykinsbd/clibench/internal/httpserver"
 	latencyPkg "github.com/lykinsbd/clibench/internal/latency"
@@ -23,18 +24,20 @@ import (
 
 // BenchCmd runs transport benchmarks.
 type BenchCmd struct {
-	Transport   string `help:"Transport to benchmark." enum:"ssh,https,http3,proxy,all" default:"all" short:"t"`
-	Iterations  int    `help:"Iterations per benchmark mode." default:"50" short:"n"`
-	Concurrency int    `help:"Concurrent workers." default:"1" short:"c"`
-	Commands    int    `help:"Commands per iteration." default:"1"`
-	Latency     string `help:"Latency profile." enum:"local,campus,regional,continental,intercontinental,transpacific" default:"local" short:"l"`
-	Userspace   bool   `help:"Use userspace latency injection (no root required)."`
-	Output      string `help:"Output format." enum:"json,table,csv" default:"json" short:"o"`
+	Transport   []string `help:"Transports to benchmark (${enum}). Comma-separated or repeated." enum:"ssh,https,http3,proxy,tunnel-https,tunnel-http3,all" default:"all" short:"t"`
+	Iterations  int      `help:"Iterations per benchmark mode." default:"50" short:"n"`
+	Concurrency int      `help:"Concurrent workers." default:"1" short:"c"`
+	Commands    int      `help:"Commands per iteration." default:"1"`
+	Latency     string   `help:"Latency profile (${enum})." enum:"local,campus,regional,continental,intercontinental,transpacific" default:"local" short:"l"`
+	Userspace   bool     `help:"Use userspace latency injection (no root required)."`
+	Output      string   `help:"Output format (${enum})." enum:"json,table,csv" default:"json" short:"o"`
 
-	SSHPort   int `help:"SSH listen port." default:"2222" group:"server"`
-	HTTPSPort int `help:"HTTPS listen port." default:"8443" group:"server"`
-	HTTP3Port int `help:"HTTP/3 listen port." default:"8444" group:"server"`
-	ProxyPort int `help:"Proxy listen port." default:"9443" group:"server"`
+	SSHPort          int `help:"SSH listen port." default:"2222" group:"server"`
+	HTTPSPort        int `help:"HTTPS listen port." default:"8443" group:"server"`
+	HTTP3Port        int `help:"HTTP/3 listen port." default:"8444" group:"server"`
+	ProxyPort        int `help:"Proxy listen port." default:"9443" group:"server"`
+	HeadendHTTPSPort int `help:"Headend proxy SSH port (HTTPS WAN)." default:"2223" group:"server"`
+	HeadendH3Port    int `help:"Headend proxy SSH port (HTTP/3 WAN)." default:"2224" group:"server"`
 
 	User        string `help:"Username." default:"admin" short:"u"`
 	Pass        string `help:"Password." default:"admin" short:"p"`
@@ -42,6 +45,15 @@ type BenchCmd struct {
 }
 
 const hostname = "bench-rtr"
+
+func (b *BenchCmd) has(t string) bool {
+	for _, v := range b.Transport {
+		if v == t || v == "all" {
+			return true
+		}
+	}
+	return false
+}
 
 // Run executes the benchmark.
 func (b *BenchCmd) Run() error {
@@ -64,11 +76,17 @@ func (b *BenchCmd) Run() error {
 	backendSSHAddr := fmt.Sprintf("localhost:%d", backendSSHPort)
 	proxyAddr := fmt.Sprintf("localhost:%d", b.ProxyPort)
 	proxyPooledAddr := fmt.Sprintf("localhost:%d", b.ProxyPort+1)
+	headendHTTPSAddr := fmt.Sprintf("localhost:%d", b.HeadendHTTPSPort)
+	headendH3Addr := fmt.Sprintf("localhost:%d", b.HeadendH3Port)
+	tunnelSiteHTTPSPort := b.ProxyPort + 2
+	tunnelSiteHTTPSAddr := fmt.Sprintf("localhost:%d", tunnelSiteHTTPSPort)
+	tunnelSiteH3Port := b.ProxyPort + 3
+	tunnelSiteH3Addr := fmt.Sprintf("localhost:%d", tunnelSiteH3Port)
 	campusDelay := 1 * time.Millisecond
 
 	if !b.Userspace && delay > 0 {
-		wanPorts := []int{b.SSHPort, b.HTTPSPort, b.HTTP3Port, b.ProxyPort, b.ProxyPort + 1}
-		campusPorts := []int{backendSSHPort}
+		wanPorts := []int{b.SSHPort, b.HTTPSPort, b.HTTP3Port, b.ProxyPort, b.ProxyPort + 1, tunnelSiteHTTPSPort, tunnelSiteH3Port}
+		campusPorts := []int{backendSSHPort, b.HeadendHTTPSPort, b.HeadendH3Port}
 		if err := netem.Setup(delay, campusDelay, wanPorts, campusPorts); err != nil {
 			return fmt.Errorf("tc netem setup (requires sudo): %w", err)
 		}
@@ -137,6 +155,29 @@ func (b *BenchCmd) Run() error {
 	h3srv := http3server.New(http3Addr, dev)
 	go h3srv.ListenAndServe()
 
+	// Tunnel: site proxy (HTTPS frontend, WAN delay) → backend SSH (campus delay)
+	startProxy(tunnelSiteHTTPSAddr, backendSSHAddr, true, delay)
+
+	// Tunnel: site proxy HTTP/3 (WAN delay) → backend SSH (campus delay)
+	tunnelSiteH3 := proxy.New(tunnelSiteH3Addr, backendSSHAddr, b.User, b.Pass, true)
+	go tunnelSiteH3.ListenAndServeH3()
+
+	// Tunnel: headend proxies (SSH frontend, campus delay) → site proxy over WAN
+	startHeadend := func(addr, backendURL, transport string, d time.Duration) {
+		ln, err := net.Listen("tcp", addr)
+		if err != nil {
+			log.Fatalf("listen %s: %v", addr, err)
+		}
+		srv, err := headend.New(addr, backendURL, b.User, b.Pass, transport)
+		if err != nil {
+			log.Fatalf("headend %s: %v", addr, err)
+		}
+		srv.SetListener(wrapListener(ln, d))
+		go srv.ListenAndServe()
+	}
+	startHeadend(headendHTTPSAddr, fmt.Sprintf("https://%s", tunnelSiteHTTPSAddr), "https", campusDelay)
+	startHeadend(headendH3Addr, fmt.Sprintf("https://%s", tunnelSiteH3Addr), "http3", campusDelay)
+
 	time.Sleep(500 * time.Millisecond)
 	log.Printf("Server ready — profile=%s, simulated RTT=%.0fms", b.Latency, rttMs)
 
@@ -153,27 +194,39 @@ func (b *BenchCmd) Run() error {
 
 	var results []stats.Result
 
-	if b.Transport == "ssh" || b.Transport == "all" {
+	if b.has("ssh") {
 		c := cfg
 		c.Addr = sshAddr
 		results = append(results, bench.SSH(c)...)
 	}
-	if b.Transport == "https" || b.Transport == "all" {
+	if b.has("https") {
 		c := cfg
 		c.Addr = httpsAddr
 		results = append(results, bench.HTTPS(c)...)
 	}
-	if b.Transport == "proxy" || b.Transport == "all" {
+	if b.has("proxy") {
 		results = append(results, bench.Proxy(bench.ProxyConfig{
 			Config:     cfg,
 			FreshAddr:  proxyAddr,
 			PooledAddr: proxyPooledAddr,
 		})...)
 	}
-	if b.Transport == "http3" || b.Transport == "all" {
+	if b.has("http3") {
 		c := cfg
 		c.Addr = http3Addr
 		results = append(results, bench.HTTP3(c)...)
+	}
+	if b.has("tunnel-https") {
+		results = append(results, bench.Tunnel(bench.TunnelConfig{
+			Config:           cfg,
+			HTTPSHeadendAddr: headendHTTPSAddr,
+		})...)
+	}
+	if b.has("tunnel-http3") {
+		results = append(results, bench.Tunnel(bench.TunnelConfig{
+			Config:        cfg,
+			H3HeadendAddr: headendH3Addr,
+		})...)
 	}
 
 	return outputResults(results, b.Output)
