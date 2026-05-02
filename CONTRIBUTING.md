@@ -22,8 +22,6 @@ make test
 
 ## Running Tests
 
-Tests run with the Go race detector enabled and have a 120-second timeout.
-
 ```bash
 # All tests (no root needed)
 make test
@@ -45,54 +43,72 @@ make bench-local
 make bench-regional
 
 # Custom run
-./bin/bench -latency continental -iterations 50 -commands 10
+./bin/clibench bench --latency continental --iterations 50 --commands 10
+
+# Single transport
+./bin/clibench bench --transport http3 --latency regional --iterations 20
+
+# Multiple transports (comma-separated or repeated)
+./bin/clibench bench --transport ssh,https --latency local --iterations 10
+
+# Table output
+./bin/clibench bench --latency local --iterations 20 --commands 5 --output table
 ```
 
 ## Regenerating Results
 
-The `results/` directory contains sample JSON output used in the blog
-series. To regenerate after code changes:
-
 ```bash
-# All results — netem (requires sudo) + userspace fallback
-make results
-
-# Netem only (requires root / CAP_NET_ADMIN)
-make results-netem
-
-# Userspace only (no root needed)
-make results-userspace
+make results           # all (netem + userspace, requires sudo)
+make results-netem     # netem only (requires sudo)
+make results-userspace # userspace only (no root)
 ```
 
-The script (`scripts/generate-results.sh`) runs all latency profiles
-at n=20 with 5 commands, plus regional scaling runs at 1/10/25/50
-commands. Takes about 5-10 minutes for the full set.
+## CLI Structure
+
+Single `clibench` binary with subcommands via [kong](https://github.com/alecthomas/kong).
+CLI is defined as Go structs with struct tags in `cmd/clibench/`:
+
+| File | Purpose |
+|---|---|
+| `main.go` | CLI struct + `kong.Parse` entrypoint |
+| `bench.go` | `BenchCmd` — benchmark runner |
+| `server.go` | `ServerCmd` — standalone server |
+| `smoketest.go` | `SmoketestCmd` — integration smoke test |
+| `format.go` | Table and CSV output formatters |
+
+To add a flag, add a struct field with kong tags. Enum validation,
+defaults, short flags, and help text are all struct tags.
+
+## Adding a New Transport
+
+1. Create the server package in `internal/` (e.g., `internal/myserver/`).
+2. Create the benchmark function in `internal/bench/`.
+3. Add the transport name to the `enum` tag on `BenchCmd.Transport` in `cmd/clibench/bench.go`.
+4. Add server startup and benchmark execution in `BenchCmd.Run()`.
+5. Add unit tests, benchmark tests, and integration tests verifying output equivalence.
+6. Update the README benchmark modes table.
 
 ## Adding a Benchmark Mode
 
-1. Add the mode logic in `internal/bench/bench.go` inside the
-   appropriate `SSH`, `HTTPS`, or `Proxy` function.
-2. Use `stats.RunParallel` for iteration execution and `stats.Summarize`
-   for result collection.
-3. Add a test in `internal/bench/bench_test.go`.
+1. Add mode logic in the appropriate function in `internal/bench/`.
+2. Use `stats.RunParallel` for iteration execution and `stats.Summarize` for results.
+3. Add a test in the corresponding `_test.go` file.
 4. Update the README benchmark modes table.
-5. Run `make test && make lint` before submitting.
 
 ## Adding a Command Transcript
 
 Place a `.txt` file in `transcripts/` with underscores replacing spaces
-in the command name. For example, `show_ip_route.txt` maps to the command
-`show ip route`. Use `{{.Hostname}}` (Go `text/template` syntax) for
-hostname substitution. No other template variables are currently supported.
+in the command name (e.g., `show_ip_route.txt` → `show ip route`).
+Use `{{.Hostname}}` for hostname substitution.
 
 ## Commit Messages
 
-Use short, descriptive commit messages prefixed with the affected package
-or area:
+Use [Conventional Commits](https://www.conventionalcommits.org/) style:
 
 ```
-netem: fix qdisc teardown on SIGINT
-bench: add pty-reuse mode
+feat: add gNMI transport benchmark
+fix: correct netem teardown on SIGINT
+refactor: split tunnel into tunnel-https and tunnel-http3
 docs: update latency profile table
 ```
 

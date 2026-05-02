@@ -51,6 +51,12 @@ sudo ./bin/clibench bench --latency intercontinental --iterations 20 --commands 
 # Single transport
 sudo ./bin/clibench bench --latency regional --iterations 20 --commands 5 --transport http3
 
+# Tunnel benchmark (SSH-to-HTTP transparent WAN tunnel)
+sudo ./bin/clibench bench --latency regional --iterations 20 --commands 5 --transport tunnel-https
+
+# Multiple transports (comma-separated)
+sudo ./bin/clibench bench --latency regional --iterations 20 --commands 5 --transport ssh,https,http3
+
 # Table output for quick comparison
 ./bin/clibench bench --latency local --iterations 20 --commands 5 --output table
 
@@ -199,7 +205,7 @@ internal/
   headend/    # SSH→HTTP headend proxy (tunnel automation side)
   latency/    # Userspace delay injection (fallback, --userspace flag)
   netem/      # tc netem setup via netlink (default, requires root)
-  proxy/      # HTTPS→SSH edge proxy (fresh + pooled modes)
+  proxy/      # HTTPS→SSH site proxy (fresh + pooled modes)
   stats/      # Benchmark statistics (percentile, summarize, runParallel)
   tlsutil/    # Shared self-signed TLS config generator
 scripts/      # Result generation and helper scripts
