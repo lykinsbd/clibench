@@ -7,7 +7,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
-	"unsafe"
 )
 
 // Counter captures packets on loopback filtered by port.
@@ -21,22 +20,33 @@ type Counter struct {
 }
 
 // New creates a packet counter for the given ports on loopback.
-// Call Start() to begin capturing, Snapshot() to read counts, Stop() to finish.
 func New(ports []int) (*Counter, error) {
-	fd, err := syscall.Socket(syscall.AF_PACKET, syscall.SOCK_RAW, int(htons(syscall.ETH_P_ALL)))
+	// SOCK_DGRAM gives a 4-byte cooked header (protocol family) instead of
+	// the 14-byte pseudo-Ethernet header from SOCK_RAW.
+	proto := int(htons(syscall.ETH_P_IP))
+	fd, err := syscall.Socket(syscall.AF_PACKET, syscall.SOCK_DGRAM, proto)
 	if err != nil {
 		return nil, err
 	}
 
 	// Bind to loopback (ifindex 1)
 	sa := &syscall.SockaddrLinklayer{
-		Protocol: htons(syscall.ETH_P_ALL),
+		Protocol: htons(syscall.ETH_P_IP),
 		Ifindex:  1, // lo
 	}
 	if err := syscall.Bind(fd, sa); err != nil {
 		syscall.Close(fd)
 		return nil, err
 	}
+
+	// Set read timeout once — 100ms lets us check the done channel periodically.
+	tv := syscall.Timeval{Sec: 0, Usec: 100_000}
+	_ = syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
+
+	// Only count outbound packets (PACKET_OUTGOING is not set for loopback
+	// in SOCK_DGRAM mode — loopback delivers each packet once to AF_PACKET).
+	// However, on some kernels loopback still delivers twice. We use
+	// PACKET_OUTGOING detection via SockaddrLinklayer.Pkttype to deduplicate.
 
 	pm := make(map[uint16]bool, len(ports))
 	for _, p := range ports {
@@ -66,6 +76,7 @@ func (c *Counter) Reset() {
 // Stop ends capture and closes the socket.
 func (c *Counter) Stop() {
 	close(c.done)
+	// Close fd to unblock Recvfrom, then wait for goroutine.
 	syscall.Close(c.fd)
 	c.wg.Wait()
 }
@@ -80,22 +91,24 @@ func (c *Counter) capture() {
 		default:
 		}
 
-		// Set a short read timeout so we can check done
-		tv := syscall.Timeval{Sec: 0, Usec: 100_000} // 100ms
-		_ = syscall.SetsockoptTimeval(c.fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
-
-		n, _, err := syscall.Recvfrom(c.fd, buf, 0)
+		n, from, err := syscall.Recvfrom(c.fd, buf, 0)
 		if err != nil {
-			continue // timeout or signal
+			continue
 		}
-		if n < 4 {
+		if n < 20 { // minimum IP header
 			continue
 		}
 
-		// Loopback packets have a 4-byte Linux cooked header (protocol family).
-		// The IP header starts at offset 4.
-		pkt := buf[:n]
-		srcPort, dstPort, ok := extractPorts(pkt[4:])
+		// On loopback, AF_PACKET delivers each packet twice (TX + RX).
+		// Filter to only count incoming delivery (Pkttype == PACKET_HOST).
+		if sa, ok := from.(*syscall.SockaddrLinklayer); ok {
+			if sa.Pkttype == syscall.PACKET_OUTGOING {
+				continue // skip TX copy, count only RX delivery
+			}
+		}
+
+		// SOCK_DGRAM strips the link header; buf starts at IP header.
+		srcPort, dstPort, ok := extractPorts(buf[:n])
 		if !ok {
 			continue
 		}
@@ -114,24 +127,18 @@ func extractPorts(ip []byte) (src, dst uint16, ok bool) {
 	if len(ip) < 20 {
 		return 0, 0, false
 	}
-
 	version := ip[0] >> 4
 	if version != 4 {
 		return 0, 0, false
 	}
-
 	ihl := int(ip[0]&0x0f) * 4
 	proto := ip[9]
-
-	// Only TCP (6) and UDP (17)
-	if proto != 6 && proto != 17 {
+	if proto != 6 && proto != 17 { // TCP or UDP only
 		return 0, 0, false
 	}
-
 	if len(ip) < ihl+4 {
 		return 0, 0, false
 	}
-
 	transport := ip[ihl:]
 	src = binary.BigEndian.Uint16(transport[0:2])
 	dst = binary.BigEndian.Uint16(transport[2:4])
@@ -139,6 +146,5 @@ func extractPorts(ip []byte) (src, dst uint16, ok bool) {
 }
 
 func htons(v uint16) uint16 {
-	b := (*[2]byte)(unsafe.Pointer(&v))
-	return binary.BigEndian.Uint16(b[:])
+	return (v<<8)&0xff00 | v>>8
 }
