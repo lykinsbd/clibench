@@ -24,6 +24,7 @@ type Result struct {
 	Concurrency int     `json:"concurrency"`
 	Latency     string  `json:"latency_profile"`
 	RTTms       float64 `json:"simulated_rtt_ms"`
+	RoundTrips  int     `json:"round_trips,omitempty"`
 	AvgMs       float64 `json:"avg_ms"`
 	MinMs       float64 `json:"min_ms"`
 	MaxMs       float64 `json:"max_ms"`
@@ -33,7 +34,9 @@ type Result struct {
 }
 
 // Summarize computes statistics from a slice of durations.
-func Summarize(transport, op string, cmds, iterations, concurrency int, profile string, rttMs float64, times []time.Duration) Result {
+// An optional trips slice provides per-iteration round-trip counts;
+// the median value is stored in the result.
+func Summarize(transport, op string, cmds, iterations, concurrency int, profile string, rttMs float64, times []time.Duration, trips ...[]int) Result {
 	valid := make([]float64, 0, len(times))
 	errors := 0
 	for _, t := range times {
@@ -82,6 +85,7 @@ func Summarize(transport, op string, cmds, iterations, concurrency int, profile 
 		Concurrency: concurrency,
 		Latency:     profile,
 		RTTms:       rttMs,
+		RoundTrips:  medianTrips(trips),
 		AvgMs:       avg,
 		MinMs:       valid[0],
 		MaxMs:       valid[n-1],
@@ -89,6 +93,17 @@ func Summarize(transport, op string, cmds, iterations, concurrency int, profile 
 		P95Ms:       Percentile(valid, 95),
 		StddevMs:    stddev,
 	}
+}
+
+// medianTrips returns the median of the first trips slice, or 0 if empty.
+func medianTrips(trips [][]int) int {
+	if len(trips) == 0 || len(trips[0]) == 0 {
+		return 0
+	}
+	s := make([]int, len(trips[0]))
+	copy(s, trips[0])
+	sort.Ints(s)
+	return s[len(s)/2]
 }
 
 // Percentile returns the p-th percentile from a sorted slice.
@@ -107,7 +122,8 @@ func Percentile(sorted []float64, p float64) float64 {
 }
 
 // RunParallel executes fn iterations times with the given concurrency.
-func RunParallel(iterations, concurrency int, fn func() time.Duration) []time.Duration {
+// The function receives the iteration index for per-iteration data collection.
+func RunParallel(iterations, concurrency int, fn func(idx int) time.Duration) []time.Duration {
 	results := make([]time.Duration, iterations)
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
@@ -118,7 +134,7 @@ func RunParallel(iterations, concurrency int, fn func() time.Duration) []time.Du
 		go func(idx int) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			results[idx] = fn()
+			results[idx] = fn(idx)
 		}(i)
 	}
 	wg.Wait()

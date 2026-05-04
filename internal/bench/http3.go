@@ -1,10 +1,12 @@
 package bench
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -12,8 +14,27 @@ import (
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 
+	"github.com/lykinsbd/clibench/internal/rtcount"
 	"github.com/lykinsbd/clibench/internal/stats"
 )
+
+// h3Dial returns an http3.Transport.Dial function that wraps the UDP conn
+// with rtcount and stores the counter at *pcc.
+func h3Dial(pcc **rtcount.PacketConn) func(ctx context.Context, addr string, tlsCfg *tls.Config, cfg *quic.Config) (*quic.Conn, error) {
+	return func(ctx context.Context, addr string, tlsCfg *tls.Config, cfg *quic.Config) (*quic.Conn, error) {
+		udpAddr, err := net.ResolveUDPAddr("udp", addr)
+		if err != nil {
+			return nil, err
+		}
+		udpConn, err := net.ListenUDP("udp", nil)
+		if err != nil {
+			return nil, err
+		}
+		cc := rtcount.WrapPacket(udpConn)
+		*pcc = cc
+		return quic.Dial(ctx, cc, udpAddr, tlsCfg, cfg)
+	}
+}
 
 // HTTP3 runs all HTTP/3 benchmark modes and returns the results.
 func HTTP3(c Config) []stats.Result {
@@ -22,9 +43,11 @@ func HTTP3(c Config) []stats.Result {
 	tlsCfg := &tls.Config{InsecureSkipVerify: true, NextProtos: []string{http3.NextProtoH3}}
 
 	// Mode 1: fresh connection per iteration
-	freshTimes := stats.RunParallel(c.Iterations, c.Concurrency, func() time.Duration {
+	freshTrips := make([]int, c.Iterations)
+	freshTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
 		start := time.Now()
-		tr := &http3.Transport{TLSClientConfig: tlsCfg.Clone()}
+		var cc *rtcount.PacketConn
+		tr := &http3.Transport{TLSClientConfig: tlsCfg.Clone(), Dial: h3Dial(&cc)}
 		client := &http.Client{Transport: tr, Timeout: 30 * time.Second}
 		for i := 0; i < c.Commands; i++ {
 			if err := doHTTPExec(client, c.Addr, c.User, c.Pass); err != nil {
@@ -33,16 +56,25 @@ func HTTP3(c Config) []stats.Result {
 				return errDuration
 			}
 		}
+		if cc != nil {
+			freshTrips[idx] = cc.Trips()
+		}
 		tr.Close()
 		return time.Since(start)
 	})
 
 	// Mode 2: keep-alive (shared QUIC connection)
-	keepTr := &http3.Transport{TLSClientConfig: tlsCfg.Clone()}
+	var keepCC *rtcount.PacketConn
+	keepTr := &http3.Transport{TLSClientConfig: tlsCfg.Clone(), Dial: h3Dial(&keepCC)}
 	keepClient := &http.Client{Transport: keepTr, Timeout: 30 * time.Second}
 	_ = doHTTPExec(keepClient, c.Addr, c.User, c.Pass) // warmup
 
-	keepTimes := stats.RunParallel(c.Iterations, c.Concurrency, func() time.Duration {
+	keepTrips := make([]int, c.Iterations)
+	keepTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
+		var before int
+		if keepCC != nil {
+			before = keepCC.Trips()
+		}
 		start := time.Now()
 		for i := 0; i < c.Commands; i++ {
 			if err := doHTTPExec(keepClient, c.Addr, c.User, c.Pass); err != nil {
@@ -50,17 +82,26 @@ func HTTP3(c Config) []stats.Result {
 				return errDuration
 			}
 		}
+		if keepCC != nil {
+			keepTrips[idx] = keepCC.Trips() - before
+		}
 		return time.Since(start)
 	})
 	keepTr.Close()
 
 	// Mode 3: batch POST over shared connection
 	batchPayload := stats.GenerateExecPayload(c.Commands)
-	batchTr := &http3.Transport{TLSClientConfig: tlsCfg.Clone()}
+	var batchCC *rtcount.PacketConn
+	batchTr := &http3.Transport{TLSClientConfig: tlsCfg.Clone(), Dial: h3Dial(&batchCC)}
 	batchClient := &http.Client{Transport: batchTr, Timeout: 30 * time.Second}
 	_ = doHTTPExec(batchClient, c.Addr, c.User, c.Pass) // warmup
 
-	batchTimes := stats.RunParallel(c.Iterations, c.Concurrency, func() time.Duration {
+	batchTrips := make([]int, c.Iterations)
+	batchTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
+		var before int
+		if batchCC != nil {
+			before = batchCC.Trips()
+		}
 		start := time.Now()
 		url := fmt.Sprintf("https://%s/admin/config", c.Addr)
 		req, err := http.NewRequest("POST", url, strings.NewReader(batchPayload))
@@ -79,18 +120,20 @@ func HTTP3(c Config) []stats.Result {
 			log.Printf("http3 batch: HTTP %d", resp.StatusCode)
 			return errDuration
 		}
+		if batchCC != nil {
+			batchTrips[idx] = batchCC.Trips() - before
+		}
 		return time.Since(start)
 	})
 	batchTr.Close()
 
 	results := []stats.Result{
-		stats.Summarize("http3", "fresh-conn", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, freshTimes),
-		stats.Summarize("http3", "keep-alive", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, keepTimes),
-		stats.Summarize("http3", "batch-post", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, batchTimes),
+		stats.Summarize("http3", "fresh-conn", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, freshTimes, freshTrips),
+		stats.Summarize("http3", "keep-alive", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, keepTimes, keepTrips),
+		stats.Summarize("http3", "batch-post", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, batchTimes, batchTrips),
 	}
 
 	// Mode 4: 0-RTT resumption
-	// First connection stores the session ticket, second uses it for 0-RTT.
 	sessionCache := tls.NewLRUClientSessionCache(1)
 	zeroRTTCfg := &tls.Config{
 		InsecureSkipVerify: true,
@@ -105,14 +148,16 @@ func HTTP3(c Config) []stats.Result {
 		log.Printf("http3 0rtt warmup: %v", err)
 	}
 	warmTr.Close()
-	// Small pause to ensure session ticket is stored
 	time.Sleep(50 * time.Millisecond)
 
-	zeroTimes := stats.RunParallel(c.Iterations, c.Concurrency, func() time.Duration {
+	zeroTrips := make([]int, c.Iterations)
+	zeroTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
 		start := time.Now()
+		var cc *rtcount.PacketConn
 		tr := &http3.Transport{
 			TLSClientConfig: zeroRTTCfg,
 			QUICConfig:      &quic.Config{Allow0RTT: true},
+			Dial:            h3Dial(&cc),
 		}
 		client := &http.Client{Transport: tr, Timeout: 30 * time.Second}
 		for i := 0; i < c.Commands; i++ {
@@ -122,10 +167,13 @@ func HTTP3(c Config) []stats.Result {
 				return errDuration
 			}
 		}
+		if cc != nil {
+			zeroTrips[idx] = cc.Trips()
+		}
 		tr.Close()
 		return time.Since(start)
 	})
-	results = append(results, stats.Summarize("http3", "0rtt-resumption", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, zeroTimes))
+	results = append(results, stats.Summarize("http3", "0rtt-resumption", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, zeroTimes, zeroTrips))
 
 	return results
 }

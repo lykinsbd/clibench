@@ -22,12 +22,9 @@ func Tunnel(c TunnelConfig) []stats.Result {
 
 	var results []stats.Result
 
-	// HTTPS tunnel modes
 	if c.HTTPSHeadendAddr != "" {
 		results = append(results, tunnelFresh(cfg, c, c.HTTPSHeadendAddr, "tunnel", "ssh-https-ssh")...)
 	}
-
-	// HTTP/3 tunnel modes
 	if c.H3HeadendAddr != "" {
 		results = append(results, tunnelFresh(cfg, c, c.H3HeadendAddr, "tunnel", "ssh-http3-ssh")...)
 	}
@@ -39,9 +36,10 @@ func tunnelFresh(cfg *ssh.ClientConfig, c TunnelConfig, edgeAddr, transport, op 
 	batchPayload := stats.GenerateExecPayload(c.Commands)
 
 	// Mode 1: fresh SSH connection per iteration
-	freshTimes := stats.RunParallel(c.Iterations, c.Concurrency, func() time.Duration {
+	freshTrips := make([]int, c.Iterations)
+	freshTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
 		start := time.Now()
-		conn, err := ssh.Dial("tcp", edgeAddr, cfg)
+		conn, cc, err := sshDialCounted(edgeAddr, cfg)
 		if err != nil {
 			log.Printf("%s fresh: %v", op, err)
 			return errDuration
@@ -60,13 +58,15 @@ func tunnelFresh(cfg *ssh.ClientConfig, c TunnelConfig, edgeAddr, transport, op 
 				return errDuration
 			}
 		}
+		freshTrips[idx] = cc.Trips()
 		return time.Since(start)
 	})
 
-	// Mode 2: batch exec (all commands in one SSH exec payload)
-	batchTimes := stats.RunParallel(c.Iterations, c.Concurrency, func() time.Duration {
+	// Mode 2: batch exec
+	batchTrips := make([]int, c.Iterations)
+	batchTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
 		start := time.Now()
-		conn, err := ssh.Dial("tcp", edgeAddr, cfg)
+		conn, cc, err := sshDialCounted(edgeAddr, cfg)
 		if err != nil {
 			log.Printf("%s-batch: %v", op, err)
 			return errDuration
@@ -83,11 +83,12 @@ func tunnelFresh(cfg *ssh.ClientConfig, c TunnelConfig, edgeAddr, transport, op 
 			log.Printf("%s-batch exec: %v", op, err)
 			return errDuration
 		}
+		batchTrips[idx] = cc.Trips()
 		return time.Since(start)
 	})
 
 	return []stats.Result{
-		stats.Summarize(transport, op, c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, freshTimes),
-		stats.Summarize(transport, op+"-batch", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, batchTimes),
+		stats.Summarize(transport, op, c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, freshTimes, freshTrips),
+		stats.Summarize(transport, op+"-batch", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, batchTimes, batchTrips),
 	}
 }
