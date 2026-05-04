@@ -129,7 +129,7 @@ func TestRunParallelConcurrency(t *testing.T) {
 	// With concurrency=1, iterations should execute serially (no overlap)
 	var running atomic.Int32
 	var maxRunning atomic.Int32
-	results := RunParallel(5, 1, func() time.Duration {
+	results := RunParallel(5, 1, func(_ int) time.Duration {
 		cur := running.Add(1)
 		for {
 			old := maxRunning.Load()
@@ -150,7 +150,7 @@ func TestRunParallelConcurrency(t *testing.T) {
 }
 
 func TestRunParallelCountsErrors(t *testing.T) {
-	results := RunParallel(4, 1, func() time.Duration {
+	results := RunParallel(4, 1, func(_ int) time.Duration {
 		return ErrDuration
 	})
 	errCount := 0
@@ -161,5 +161,22 @@ func TestRunParallelCountsErrors(t *testing.T) {
 	}
 	if errCount != 4 {
 		t.Errorf("errCount = %d, want 4", errCount)
+	}
+}
+
+func TestSummarizeWithTrips(t *testing.T) {
+	times := []time.Duration{10 * time.Millisecond, 20 * time.Millisecond, 15 * time.Millisecond}
+	trips := []int{5, 7, 5}
+	r := Summarize("ssh", "fresh-conn", 1, 3, 1, "local", 0, times, trips)
+	if r.RoundTrips != 5 { // median of [5, 5, 7] = 5
+		t.Errorf("RoundTrips = %d, want 5", r.RoundTrips)
+	}
+}
+
+func TestSummarizeWithoutTrips(t *testing.T) {
+	times := []time.Duration{10 * time.Millisecond}
+	r := Summarize("https", "keep-alive", 1, 1, 1, "local", 0, times)
+	if r.RoundTrips != 0 {
+		t.Errorf("RoundTrips = %d, want 0 when no trips provided", r.RoundTrips)
 	}
 }
