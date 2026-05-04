@@ -17,6 +17,7 @@ import (
 	"github.com/lykinsbd/clibench/internal/httpserver"
 	latencyPkg "github.com/lykinsbd/clibench/internal/latency"
 	"github.com/lykinsbd/clibench/internal/netem"
+	"github.com/lykinsbd/clibench/internal/pktcount"
 	"github.com/lykinsbd/clibench/internal/proxy"
 	"github.com/lykinsbd/clibench/internal/sshserver"
 	"github.com/lykinsbd/clibench/internal/stats"
@@ -181,6 +182,23 @@ func (b *BenchCmd) Run() error {
 	time.Sleep(500 * time.Millisecond)
 	log.Printf("Server ready — profile=%s, simulated RTT=%.0fms", b.Latency, rttMs)
 
+	// Start packet counter if we have root (same requirement as netem)
+	var pc *pktcount.Counter
+	if !b.Userspace && delay > 0 {
+		allPorts := []int{b.SSHPort, b.HTTPSPort, b.HTTP3Port, b.ProxyPort, b.ProxyPort + 1,
+			backendSSHPort, tunnelSiteHTTPSPort, tunnelSiteH3Port,
+			b.HeadendHTTPSPort, b.HeadendH3Port}
+		var err error
+		pc, err = pktcount.New(allPorts)
+		if err != nil {
+			log.Printf("packet counter unavailable: %v", err)
+		} else {
+			pc.Start()
+			defer pc.Stop()
+			log.Printf("AF_PACKET: counting packets on ports %v", allPorts)
+		}
+	}
+
 	cfg := bench.Config{
 		User:        b.User,
 		Pass:        b.Pass,
@@ -192,40 +210,59 @@ func (b *BenchCmd) Run() error {
 		Hostname:    hostname,
 	}
 
+	// pktWrap runs a benchmark function and attaches per-mode packet counts.
+	pktWrap := func(fn func() []stats.Result) []stats.Result {
+		if pc == nil {
+			return fn()
+		}
+		pc.Reset()
+		rs := fn()
+		totalIn, totalOut := pc.Snapshot()
+		// Distribute total packets evenly across modes (each mode runs
+		// sequentially within a transport function).
+		// For per-mode granularity, each mode would need its own snapshot,
+		// but total-per-transport is sufficient for blog charts.
+		if len(rs) > 0 {
+			perIn := totalIn / len(rs)
+			perOut := totalOut / len(rs)
+			for i := range rs {
+				rs[i].PacketsIn = perIn
+				rs[i].PacketsOut = perOut
+			}
+		}
+		return rs
+	}
+
 	var results []stats.Result
 
 	if b.has("ssh") {
 		c := cfg
 		c.Addr = sshAddr
-		results = append(results, bench.SSH(c)...)
+		results = append(results, pktWrap(func() []stats.Result { return bench.SSH(c) })...)
 	}
 	if b.has("https") {
 		c := cfg
 		c.Addr = httpsAddr
-		results = append(results, bench.HTTPS(c)...)
+		results = append(results, pktWrap(func() []stats.Result { return bench.HTTPS(c) })...)
 	}
 	if b.has("proxy") {
-		results = append(results, bench.Proxy(bench.ProxyConfig{
-			Config:     cfg,
-			FreshAddr:  proxyAddr,
-			PooledAddr: proxyPooledAddr,
+		results = append(results, pktWrap(func() []stats.Result {
+			return bench.Proxy(bench.ProxyConfig{Config: cfg, FreshAddr: proxyAddr, PooledAddr: proxyPooledAddr})
 		})...)
 	}
 	if b.has("http3") {
 		c := cfg
 		c.Addr = http3Addr
-		results = append(results, bench.HTTP3(c)...)
+		results = append(results, pktWrap(func() []stats.Result { return bench.HTTP3(c) })...)
 	}
 	if b.has("tunnel-https") {
-		results = append(results, bench.Tunnel(bench.TunnelConfig{
-			Config:           cfg,
-			HTTPSHeadendAddr: headendHTTPSAddr,
+		results = append(results, pktWrap(func() []stats.Result {
+			return bench.Tunnel(bench.TunnelConfig{Config: cfg, HTTPSHeadendAddr: headendHTTPSAddr})
 		})...)
 	}
 	if b.has("tunnel-http3") {
-		results = append(results, bench.Tunnel(bench.TunnelConfig{
-			Config:        cfg,
-			H3HeadendAddr: headendH3Addr,
+		results = append(results, pktWrap(func() []stats.Result {
+			return bench.Tunnel(bench.TunnelConfig{Config: cfg, H3HeadendAddr: headendH3Addr})
 		})...)
 	}
 
