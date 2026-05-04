@@ -283,21 +283,24 @@ func HTTPS(c Config) []stats.Result {
 
 	tlsCfg := &tls.Config{InsecureSkipVerify: true}
 
+	// countedTr wraps an http.Transport with the rtcount.Conn it created.
+	type countedTr struct {
+		*http.Transport
+		cc *rtcount.Conn
+	}
+
 	// countingTransport returns an http.Transport that wraps connections with rtcount.
-	// The returned *rtcount.Conn pointer is set on first dial.
-	countingTransport := func(disableKeepAlive bool) (*http.Transport, **rtcount.Conn) {
-		cc := new(*rtcount.Conn)
-		tr := &http.Transport{
-			TLSClientConfig:   tlsCfg,
-			DisableKeepAlives: disableKeepAlive,
+	countingTransport := func() *countedTr {
+		ct := &countedTr{}
+		ct.Transport = &http.Transport{
+			TLSClientConfig: tlsCfg,
 			DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				tc, err := net.Dial(network, addr)
 				if err != nil {
 					return nil, err
 				}
-				wrapped := rtcount.Wrap(tc)
-				*cc = wrapped
-				tlsConn := tls.Client(wrapped, tlsCfg)
+				ct.cc = rtcount.Wrap(tc)
+				tlsConn := tls.Client(ct.cc, tlsCfg)
 				if err := tlsConn.HandshakeContext(ctx); err != nil {
 					tc.Close()
 					return nil, err
@@ -305,7 +308,7 @@ func HTTPS(c Config) []stats.Result {
 				return tlsConn, nil
 			},
 		}
-		return tr, cc
+		return ct
 	}
 
 	// Mode 1: fresh connection per iteration
@@ -343,15 +346,15 @@ func HTTPS(c Config) []stats.Result {
 	})
 
 	// Mode 2: keep-alive — shared connection, count per iteration
-	keepTr, keepCC := countingTransport(false)
-	keepClient := &http.Client{Transport: keepTr, Timeout: 30 * time.Second}
+	keepTr := countingTransport()
+	keepClient := &http.Client{Transport: keepTr.Transport, Timeout: 30 * time.Second}
 	_ = doHTTPExec(keepClient, c.Addr, c.User, c.Pass)
 
 	keepC := newCounters(c.Iterations)
 	reuseTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
 		var bt, br, bw int
-		if c.Concurrency == 1 && *keepCC != nil {
-			bt, br, bw = (*keepCC).Trips(), (*keepCC).Reads(), (*keepCC).Writes()
+		if c.Concurrency == 1 && keepTr.cc != nil {
+			bt, br, bw = keepTr.cc.Trips(), keepTr.cc.Reads(), keepTr.cc.Writes()
 		}
 		start := time.Now()
 		for i := 0; i < c.Commands; i++ {
@@ -360,23 +363,23 @@ func HTTPS(c Config) []stats.Result {
 				return errDuration
 			}
 		}
-		if c.Concurrency == 1 && *keepCC != nil {
-			keepC.recordConnDelta(idx, *keepCC, bt, br, bw)
+		if c.Concurrency == 1 && keepTr.cc != nil {
+			keepC.recordConnDelta(idx, keepTr.cc, bt, br, bw)
 		}
 		return time.Since(start)
 	})
 
 	// Mode 3: batch POST
 	batchPayload := stats.GenerateExecPayload(c.Commands)
-	batchTr, batchCC := countingTransport(false)
-	batchClient := &http.Client{Transport: batchTr, Timeout: 30 * time.Second}
+	batchTr := countingTransport()
+	batchClient := &http.Client{Transport: batchTr.Transport, Timeout: 30 * time.Second}
 	_ = doHTTPExec(batchClient, c.Addr, c.User, c.Pass)
 
 	batchC := newCounters(c.Iterations)
 	batchTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
 		var bt, br, bw int
-		if c.Concurrency == 1 && *batchCC != nil {
-			bt, br, bw = (*batchCC).Trips(), (*batchCC).Reads(), (*batchCC).Writes()
+		if c.Concurrency == 1 && batchTr.cc != nil {
+			bt, br, bw = batchTr.cc.Trips(), batchTr.cc.Reads(), batchTr.cc.Writes()
 		}
 		start := time.Now()
 		url := fmt.Sprintf("https://%s/admin/config", c.Addr)
@@ -396,8 +399,8 @@ func HTTPS(c Config) []stats.Result {
 			log.Printf("https batch: HTTP %d", resp.StatusCode)
 			return errDuration
 		}
-		if c.Concurrency == 1 && *batchCC != nil {
-			batchC.recordConnDelta(idx, *batchCC, bt, br, bw)
+		if c.Concurrency == 1 && batchTr.cc != nil {
+			batchC.recordConnDelta(idx, batchTr.cc, bt, br, bw)
 		}
 		return time.Since(start)
 	})
@@ -416,15 +419,15 @@ func HTTPS(c Config) []stats.Result {
 		}
 		multiPath := strings.Join(cmdParts, "/")
 
-		multiTr, multiCC := countingTransport(false)
-		multiClient := &http.Client{Transport: multiTr, Timeout: 30 * time.Second}
+		multiTr := countingTransport()
+		multiClient := &http.Client{Transport: multiTr.Transport, Timeout: 30 * time.Second}
 		_ = doHTTPExec(multiClient, c.Addr, c.User, c.Pass)
 
 		multiC := newCounters(c.Iterations)
 		multiTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
 			var bt, br, bw int
-			if c.Concurrency == 1 && *multiCC != nil {
-				bt, br, bw = (*multiCC).Trips(), (*multiCC).Reads(), (*multiCC).Writes()
+			if c.Concurrency == 1 && multiTr.cc != nil {
+				bt, br, bw = multiTr.cc.Trips(), multiTr.cc.Reads(), multiTr.cc.Writes()
 			}
 			start := time.Now()
 			url := fmt.Sprintf("https://%s/admin/exec/%s", c.Addr, multiPath)
@@ -444,8 +447,8 @@ func HTTPS(c Config) []stats.Result {
 				log.Printf("https multi: HTTP %d", resp.StatusCode)
 				return errDuration
 			}
-			if c.Concurrency == 1 && *multiCC != nil {
-				multiC.recordConnDelta(idx, *multiCC, bt, br, bw)
+			if c.Concurrency == 1 && multiTr.cc != nil {
+				multiC.recordConnDelta(idx, multiTr.cc, bt, br, bw)
 			}
 			return time.Since(start)
 		})
