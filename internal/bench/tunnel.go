@@ -35,8 +35,7 @@ func Tunnel(c TunnelConfig) []stats.Result {
 func tunnelFresh(cfg *ssh.ClientConfig, c TunnelConfig, edgeAddr, transport, op string) []stats.Result {
 	batchPayload := stats.GenerateExecPayload(c.Commands)
 
-	// Mode 1: fresh SSH connection per iteration
-	freshTrips := make([]int, c.Iterations)
+	freshC := newCounters(c.Iterations)
 	freshTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
 		start := time.Now()
 		conn, cc, err := sshDialCounted(edgeAddr, cfg)
@@ -58,12 +57,11 @@ func tunnelFresh(cfg *ssh.ClientConfig, c TunnelConfig, edgeAddr, transport, op 
 				return errDuration
 			}
 		}
-		freshTrips[idx] = cc.Trips()
+		freshC.recordConn(idx, cc)
 		return time.Since(start)
 	})
 
-	// Mode 2: batch exec
-	batchTrips := make([]int, c.Iterations)
+	batchC := newCounters(c.Iterations)
 	batchTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
 		start := time.Now()
 		conn, cc, err := sshDialCounted(edgeAddr, cfg)
@@ -83,12 +81,12 @@ func tunnelFresh(cfg *ssh.ClientConfig, c TunnelConfig, edgeAddr, transport, op 
 			log.Printf("%s-batch exec: %v", op, err)
 			return errDuration
 		}
-		batchTrips[idx] = cc.Trips()
+		batchC.recordConn(idx, cc)
 		return time.Since(start)
 	})
 
 	return []stats.Result{
-		stats.Summarize(transport, op, c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, freshTimes, freshTrips),
-		stats.Summarize(transport, op+"-batch", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, batchTimes, batchTrips),
+		stats.Summarize(transport, op, c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, freshTimes, freshC.iter()),
+		stats.Summarize(transport, op+"-batch", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, batchTimes, batchC.iter()),
 	}
 }

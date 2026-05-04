@@ -25,6 +25,8 @@ type Result struct {
 	Latency     string  `json:"latency_profile"`
 	RTTms       float64 `json:"simulated_rtt_ms"`
 	RoundTrips  int     `json:"round_trips,omitempty"`
+	Reads       int     `json:"reads,omitempty"`
+	Writes      int     `json:"writes,omitempty"`
 	AvgMs       float64 `json:"avg_ms"`
 	MinMs       float64 `json:"min_ms"`
 	MaxMs       float64 `json:"max_ms"`
@@ -33,10 +35,17 @@ type Result struct {
 	StddevMs    float64 `json:"stddev_ms"`
 }
 
+// IterCounts holds per-iteration counters collected alongside durations.
+type IterCounts struct {
+	Trips  []int
+	Reads  []int
+	Writes []int
+}
+
 // Summarize computes statistics from a slice of durations.
-// An optional trips slice provides per-iteration round-trip counts;
-// the median value is stored in the result.
-func Summarize(transport, op string, cmds, iterations, concurrency int, profile string, rttMs float64, times []time.Duration, trips ...[]int) Result {
+// An optional IterCounts provides per-iteration round-trip and packet counts;
+// median values are stored in the result.
+func Summarize(transport, op string, cmds, iterations, concurrency int, profile string, rttMs float64, times []time.Duration, counts ...IterCounts) Result {
 	valid := make([]float64, 0, len(times))
 	errors := 0
 	for _, t := range times {
@@ -76,6 +85,11 @@ func Summarize(transport, op string, cmds, iterations, concurrency int, profile 
 		stddev = math.Sqrt(variance / float64(n-1))
 	}
 
+	var ic IterCounts
+	if len(counts) > 0 {
+		ic = counts[0]
+	}
+
 	return Result{
 		Transport:   transport,
 		Operation:   op,
@@ -85,7 +99,9 @@ func Summarize(transport, op string, cmds, iterations, concurrency int, profile 
 		Concurrency: concurrency,
 		Latency:     profile,
 		RTTms:       rttMs,
-		RoundTrips:  medianTrips(trips),
+		RoundTrips:  medianInts(ic.Trips),
+		Reads:       medianInts(ic.Reads),
+		Writes:      medianInts(ic.Writes),
 		AvgMs:       avg,
 		MinMs:       valid[0],
 		MaxMs:       valid[n-1],
@@ -95,15 +111,15 @@ func Summarize(transport, op string, cmds, iterations, concurrency int, profile 
 	}
 }
 
-// medianTrips returns the median of the first trips slice, or 0 if empty.
-func medianTrips(trips [][]int) int {
-	if len(trips) == 0 || len(trips[0]) == 0 {
+// medianInts returns the median of a slice, or 0 if empty.
+func medianInts(s []int) int {
+	if len(s) == 0 {
 		return 0
 	}
-	s := make([]int, len(trips[0]))
-	copy(s, trips[0])
-	sort.Ints(s)
-	return s[len(s)/2]
+	c := make([]int, len(s))
+	copy(c, s)
+	sort.Ints(c)
+	return c[len(c)/2]
 }
 
 // Percentile returns the p-th percentile from a sorted slice.

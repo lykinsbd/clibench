@@ -43,7 +43,7 @@ func HTTP3(c Config) []stats.Result {
 	tlsCfg := &tls.Config{InsecureSkipVerify: true, NextProtos: []string{http3.NextProtoH3}}
 
 	// Mode 1: fresh connection per iteration
-	freshTrips := make([]int, c.Iterations)
+	freshC := newCounters(c.Iterations)
 	freshTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
 		start := time.Now()
 		var cc *rtcount.PacketConn
@@ -57,7 +57,7 @@ func HTTP3(c Config) []stats.Result {
 			}
 		}
 		if cc != nil {
-			freshTrips[idx] = cc.Trips()
+			freshC.recordPacket(idx, cc)
 		}
 		tr.Close()
 		return time.Since(start)
@@ -67,13 +67,13 @@ func HTTP3(c Config) []stats.Result {
 	var keepCC *rtcount.PacketConn
 	keepTr := &http3.Transport{TLSClientConfig: tlsCfg.Clone(), Dial: h3Dial(&keepCC)}
 	keepClient := &http.Client{Transport: keepTr, Timeout: 30 * time.Second}
-	_ = doHTTPExec(keepClient, c.Addr, c.User, c.Pass) // warmup
+	_ = doHTTPExec(keepClient, c.Addr, c.User, c.Pass)
 
-	keepTrips := make([]int, c.Iterations)
+	keepC := newCounters(c.Iterations)
 	keepTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
-		var before int
+		var bt, br, bw int
 		if keepCC != nil {
-			before = keepCC.Trips()
+			bt, br, bw = keepCC.Trips(), keepCC.Reads(), keepCC.Writes()
 		}
 		start := time.Now()
 		for i := 0; i < c.Commands; i++ {
@@ -83,7 +83,7 @@ func HTTP3(c Config) []stats.Result {
 			}
 		}
 		if keepCC != nil {
-			keepTrips[idx] = keepCC.Trips() - before
+			keepC.recordPacketDelta(idx, keepCC, bt, br, bw)
 		}
 		return time.Since(start)
 	})
@@ -94,13 +94,13 @@ func HTTP3(c Config) []stats.Result {
 	var batchCC *rtcount.PacketConn
 	batchTr := &http3.Transport{TLSClientConfig: tlsCfg.Clone(), Dial: h3Dial(&batchCC)}
 	batchClient := &http.Client{Transport: batchTr, Timeout: 30 * time.Second}
-	_ = doHTTPExec(batchClient, c.Addr, c.User, c.Pass) // warmup
+	_ = doHTTPExec(batchClient, c.Addr, c.User, c.Pass)
 
-	batchTrips := make([]int, c.Iterations)
+	batchC := newCounters(c.Iterations)
 	batchTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
-		var before int
+		var bt, br, bw int
 		if batchCC != nil {
-			before = batchCC.Trips()
+			bt, br, bw = batchCC.Trips(), batchCC.Reads(), batchCC.Writes()
 		}
 		start := time.Now()
 		url := fmt.Sprintf("https://%s/admin/config", c.Addr)
@@ -121,16 +121,16 @@ func HTTP3(c Config) []stats.Result {
 			return errDuration
 		}
 		if batchCC != nil {
-			batchTrips[idx] = batchCC.Trips() - before
+			batchC.recordPacketDelta(idx, batchCC, bt, br, bw)
 		}
 		return time.Since(start)
 	})
 	batchTr.Close()
 
 	results := []stats.Result{
-		stats.Summarize("http3", "fresh-conn", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, freshTimes, freshTrips),
-		stats.Summarize("http3", "keep-alive", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, keepTimes, keepTrips),
-		stats.Summarize("http3", "batch-post", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, batchTimes, batchTrips),
+		stats.Summarize("http3", "fresh-conn", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, freshTimes, freshC.iter()),
+		stats.Summarize("http3", "keep-alive", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, keepTimes, keepC.iter()),
+		stats.Summarize("http3", "batch-post", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, batchTimes, batchC.iter()),
 	}
 
 	// Mode 4: 0-RTT resumption
@@ -141,7 +141,6 @@ func HTTP3(c Config) []stats.Result {
 		ClientSessionCache: sessionCache,
 	}
 
-	// Warmup: establish initial connection to get session ticket
 	warmTr := &http3.Transport{TLSClientConfig: zeroRTTCfg}
 	warmClient := &http.Client{Transport: warmTr, Timeout: 30 * time.Second}
 	if err := doHTTPExec(warmClient, c.Addr, c.User, c.Pass); err != nil {
@@ -150,7 +149,7 @@ func HTTP3(c Config) []stats.Result {
 	warmTr.Close()
 	time.Sleep(50 * time.Millisecond)
 
-	zeroTrips := make([]int, c.Iterations)
+	zeroC := newCounters(c.Iterations)
 	zeroTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
 		start := time.Now()
 		var cc *rtcount.PacketConn
@@ -168,12 +167,12 @@ func HTTP3(c Config) []stats.Result {
 			}
 		}
 		if cc != nil {
-			zeroTrips[idx] = cc.Trips()
+			zeroC.recordPacket(idx, cc)
 		}
 		tr.Close()
 		return time.Since(start)
 	})
-	results = append(results, stats.Summarize("http3", "0rtt-resumption", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, zeroTimes, zeroTrips))
+	results = append(results, stats.Summarize("http3", "0rtt-resumption", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, zeroTimes, zeroC.iter()))
 
 	return results
 }

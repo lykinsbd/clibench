@@ -166,10 +166,20 @@ func TestRunParallelCountsErrors(t *testing.T) {
 
 func TestSummarizeWithTrips(t *testing.T) {
 	times := []time.Duration{10 * time.Millisecond, 20 * time.Millisecond, 15 * time.Millisecond}
-	trips := []int{5, 7, 5}
-	r := Summarize("ssh", "fresh-conn", 1, 3, 1, "local", 0, times, trips)
+	ic := IterCounts{
+		Trips:  []int{5, 7, 5},
+		Reads:  []int{10, 12, 10},
+		Writes: []int{8, 9, 8},
+	}
+	r := Summarize("ssh", "fresh-conn", 1, 3, 1, "local", 0, times, ic)
 	if r.RoundTrips != 5 { // median of [5, 5, 7] = 5
 		t.Errorf("RoundTrips = %d, want 5", r.RoundTrips)
+	}
+	if r.Reads != 10 { // median of [10, 10, 12] = 10
+		t.Errorf("Reads = %d, want 10", r.Reads)
+	}
+	if r.Writes != 8 { // median of [8, 8, 9] = 8
+		t.Errorf("Writes = %d, want 8", r.Writes)
 	}
 }
 
@@ -177,6 +187,9 @@ func TestSummarizeWithoutTrips(t *testing.T) {
 	times := []time.Duration{10 * time.Millisecond}
 	r := Summarize("https", "keep-alive", 1, 1, 1, "local", 0, times)
 	if r.RoundTrips != 0 {
-		t.Errorf("RoundTrips = %d, want 0 when no trips provided", r.RoundTrips)
+		t.Errorf("RoundTrips = %d, want 0 when no counts provided", r.RoundTrips)
+	}
+	if r.Reads != 0 {
+		t.Errorf("Reads = %d, want 0 when no counts provided", r.Reads)
 	}
 }
