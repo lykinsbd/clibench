@@ -175,11 +175,11 @@ func TestSummarizeWithTrips(t *testing.T) {
 	if r.RoundTrips != 5 { // median of [5, 5, 7] = 5
 		t.Errorf("RoundTrips = %d, want 5", r.RoundTrips)
 	}
-	if r.Reads != 10 { // median of [10, 10, 12] = 10
-		t.Errorf("Reads = %d, want 10", r.Reads)
+	if r.ReadOps != 10 { // median of [10, 10, 12] = 10
+		t.Errorf("ReadOps = %d, want 10", r.ReadOps)
 	}
-	if r.Writes != 8 { // median of [8, 8, 9] = 8
-		t.Errorf("Writes = %d, want 8", r.Writes)
+	if r.WriteOps != 8 { // median of [8, 8, 9] = 8
+		t.Errorf("WriteOps = %d, want 8", r.WriteOps)
 	}
 }
 
@@ -189,7 +189,7 @@ func TestSummarizeWithoutTrips(t *testing.T) {
 	if r.RoundTrips != 0 {
 		t.Errorf("RoundTrips = %d, want 0 when no counts provided", r.RoundTrips)
 	}
-	if r.Reads != 0 {
-		t.Errorf("Reads = %d, want 0 when no counts provided", r.Reads)
+	if r.ReadOps != 0 {
+		t.Errorf("ReadOps = %d, want 0 when no counts provided", r.ReadOps)
 	}
 }

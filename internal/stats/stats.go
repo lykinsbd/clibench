@@ -25,8 +25,10 @@ type Result struct {
 	Latency     string  `json:"latency_profile"`
 	RTTms       float64 `json:"simulated_rtt_ms"`
 	RoundTrips  int     `json:"round_trips,omitempty"`
-	Reads       int     `json:"reads,omitempty"`
-	Writes      int     `json:"writes,omitempty"`
+	ReadOps     int     `json:"read_ops,omitempty"`
+	WriteOps    int     `json:"write_ops,omitempty"`
+	PacketsIn   int     `json:"packets_in,omitempty"`
+	PacketsOut  int     `json:"packets_out,omitempty"`
 	AvgMs       float64 `json:"avg_ms"`
 	MinMs       float64 `json:"min_ms"`
 	MaxMs       float64 `json:"max_ms"`
@@ -100,8 +102,8 @@ func Summarize(transport, op string, cmds, iterations, concurrency int, profile 
 		Latency:     profile,
 		RTTms:       rttMs,
 		RoundTrips:  medianInts(ic.Trips),
-		Reads:       medianInts(ic.Reads),
-		Writes:      medianInts(ic.Writes),
+		ReadOps:     medianInts(ic.Reads),
+		WriteOps:    medianInts(ic.Writes),
 		AvgMs:       avg,
 		MinMs:       valid[0],
 		MaxMs:       valid[n-1],
