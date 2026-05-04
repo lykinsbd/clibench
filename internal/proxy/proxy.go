@@ -36,6 +36,7 @@ type Server struct {
 	listener    net.Listener
 	packetConn  net.PacketConn
 	srv         *http.Server
+	h3srv       *http3.Server
 }
 
 // New creates a proxy server. If pooled is true, one SSH connection
@@ -67,12 +68,26 @@ func (s *Server) Addr() string {
 	return ""
 }
 
-// Close stops the proxy server.
+// Close stops the proxy server and releases all resources.
 func (s *Server) Close() error {
-	if s.srv != nil {
-		return s.srv.Close()
+	var firstErr error
+	if s.h3srv != nil {
+		if err := s.h3srv.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
-	return nil
+	if s.srv != nil {
+		if err := s.srv.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	s.mu.Lock()
+	if s.pool != nil {
+		s.pool.Close()
+		s.pool = nil
+	}
+	s.mu.Unlock()
+	return firstErr
 }
 
 // ListenAndServeTLS starts the HTTPS proxy.
@@ -244,6 +259,7 @@ func (s *Server) ListenAndServeH3() error {
 		TLSConfig: tlsCfg,
 		QUICConfig: &quic.Config{Allow0RTT: true},
 	}
+	s.h3srv = h3srv
 
 	if s.packetConn == nil {
 		s.packetConn, err = net.ListenPacket("udp", s.addr)

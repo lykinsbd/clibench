@@ -93,15 +93,6 @@ func (b *BenchCmd) Run() error {
 		}
 		defer netem.Teardown()
 
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-		go func() {
-			<-sigCh
-			netem.Teardown()
-			os.Exit(0)
-		}()
-		defer signal.Stop(sigCh)
-
 		log.Printf("tc netem: %dms one-way on ports %v, %dms on ports %v",
 			delay.Milliseconds(), wanPorts, campusDelay.Milliseconds(), campusPorts)
 	} else if b.Userspace && delay > 0 {
@@ -115,70 +106,92 @@ func (b *BenchCmd) Run() error {
 		return ln
 	}
 
-	startSSH := func(addr string, d time.Duration) {
+	startSSH := func(addr string, d time.Duration) error {
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
-			log.Fatalf("listen %s: %v", addr, err)
+			return fmt.Errorf("listen %s: %w", addr, err)
 		}
 		srv, err := sshserver.New(addr, dev)
 		if err != nil {
-			log.Fatalf("ssh %s: %v", addr, err)
+			ln.Close()
+			return fmt.Errorf("ssh %s: %w", addr, err)
 		}
 		srv.SetListener(wrapListener(ln, d))
 		go srv.ListenAndServe()
+		return nil
 	}
 
-	startHTTPS := func(addr string, d time.Duration) {
+	startHTTPS := func(addr string, d time.Duration) error {
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
-			log.Fatalf("listen %s: %v", addr, err)
+			return fmt.Errorf("listen %s: %w", addr, err)
 		}
 		srv := httpserver.New(addr, dev)
 		srv.SetListener(wrapListener(ln, d))
 		go srv.ListenAndServeTLS()
+		return nil
 	}
 
-	startProxy := func(addr, backend string, pooled bool, d time.Duration) {
+	startProxy := func(addr, backend string, pooled bool, d time.Duration) error {
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
-			log.Fatalf("listen %s: %v", addr, err)
+			return fmt.Errorf("listen %s: %w", addr, err)
 		}
 		p := proxy.New(addr, backend, b.User, b.Pass, pooled)
 		p.SetListener(wrapListener(ln, d))
 		go p.ListenAndServeTLS()
+		return nil
 	}
 
-	startSSH(sshAddr, delay)
-	startHTTPS(httpsAddr, delay)
-	startSSH(backendSSHAddr, campusDelay)
-	startProxy(proxyAddr, backendSSHAddr, false, delay)
-	startProxy(proxyPooledAddr, backendSSHAddr, true, delay)
+	if err := startSSH(sshAddr, delay); err != nil {
+		return err
+	}
+	if err := startHTTPS(httpsAddr, delay); err != nil {
+		return err
+	}
+	if err := startSSH(backendSSHAddr, campusDelay); err != nil {
+		return err
+	}
+	if err := startProxy(proxyAddr, backendSSHAddr, false, delay); err != nil {
+		return err
+	}
+	if err := startProxy(proxyPooledAddr, backendSSHAddr, true, delay); err != nil {
+		return err
+	}
 
 	h3srv := http3server.New(http3Addr, dev)
 	go h3srv.ListenAndServe()
 
 	// Tunnel: site proxy (HTTPS frontend, WAN delay) → backend SSH (campus delay)
-	startProxy(tunnelSiteHTTPSAddr, backendSSHAddr, true, delay)
+	if err := startProxy(tunnelSiteHTTPSAddr, backendSSHAddr, true, delay); err != nil {
+		return err
+	}
 
 	// Tunnel: site proxy HTTP/3 (WAN delay) → backend SSH (campus delay)
 	tunnelSiteH3 := proxy.New(tunnelSiteH3Addr, backendSSHAddr, b.User, b.Pass, true)
 	go tunnelSiteH3.ListenAndServeH3()
 
 	// Tunnel: headend proxies (SSH frontend, campus delay) → site proxy over WAN
-	startHeadend := func(addr, backendURL, transport string, d time.Duration) {
+	startHeadend := func(addr, backendURL, transport string, d time.Duration) error {
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
-			log.Fatalf("listen %s: %v", addr, err)
+			return fmt.Errorf("listen %s: %w", addr, err)
 		}
 		srv, err := headend.New(addr, backendURL, b.User, b.Pass, transport)
 		if err != nil {
-			log.Fatalf("headend %s: %v", addr, err)
+			ln.Close()
+			return fmt.Errorf("headend %s: %w", addr, err)
 		}
 		srv.SetListener(wrapListener(ln, d))
 		go srv.ListenAndServe()
+		return nil
 	}
-	startHeadend(headendHTTPSAddr, fmt.Sprintf("https://%s", tunnelSiteHTTPSAddr), "https", campusDelay)
-	startHeadend(headendH3Addr, fmt.Sprintf("https://%s", tunnelSiteH3Addr), "http3", campusDelay)
+	if err := startHeadend(headendHTTPSAddr, fmt.Sprintf("https://%s", tunnelSiteHTTPSAddr), "https", campusDelay); err != nil {
+		return err
+	}
+	if err := startHeadend(headendH3Addr, fmt.Sprintf("https://%s", tunnelSiteH3Addr), "http3", campusDelay); err != nil {
+		return err
+	}
 
 	time.Sleep(500 * time.Millisecond)
 	log.Printf("Server ready — profile=%s, simulated RTT=%.0fms", b.Latency, rttMs)
@@ -198,6 +211,22 @@ func (b *BenchCmd) Run() error {
 			defer pc.Stop()
 			log.Printf("AF_PACKET: counting packets on ports %v", allPorts)
 		}
+	}
+
+	// Signal handler for clean shutdown — must be after all resource setup
+	// so it can clean up everything that defers would.
+	if !b.Userspace && delay > 0 {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			<-sigCh
+			if pc != nil {
+				pc.Stop()
+			}
+			netem.Teardown()
+			os.Exit(0)
+		}()
+		defer signal.Stop(sigCh)
 	}
 
 	cfg := bench.Config{
