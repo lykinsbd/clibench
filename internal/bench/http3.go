@@ -72,7 +72,7 @@ func HTTP3(c Config) []stats.Result {
 	keepC := newCounters(c.Iterations)
 	keepTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
 		var bt, br, bw int
-		if keepCC != nil {
+		if c.Concurrency == 1 && keepCC != nil {
 			bt, br, bw = keepCC.Trips(), keepCC.Reads(), keepCC.Writes()
 		}
 		start := time.Now()
@@ -82,7 +82,7 @@ func HTTP3(c Config) []stats.Result {
 				return errDuration
 			}
 		}
-		if keepCC != nil {
+		if c.Concurrency == 1 && keepCC != nil {
 			keepC.recordPacketDelta(idx, keepCC, bt, br, bw)
 		}
 		return time.Since(start)
@@ -99,7 +99,7 @@ func HTTP3(c Config) []stats.Result {
 	batchC := newCounters(c.Iterations)
 	batchTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
 		var bt, br, bw int
-		if batchCC != nil {
+		if c.Concurrency == 1 && batchCC != nil {
 			bt, br, bw = batchCC.Trips(), batchCC.Reads(), batchCC.Writes()
 		}
 		start := time.Now()
@@ -120,7 +120,7 @@ func HTTP3(c Config) []stats.Result {
 			log.Printf("http3 batch: HTTP %d", resp.StatusCode)
 			return errDuration
 		}
-		if batchCC != nil {
+		if c.Concurrency == 1 && batchCC != nil {
 			batchC.recordPacketDelta(idx, batchCC, bt, br, bw)
 		}
 		return time.Since(start)

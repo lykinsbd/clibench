@@ -156,7 +156,11 @@ func SSH(c Config) []stats.Result {
 		}
 		reuseC = newCounters(c.Iterations)
 		reuseTimes = stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
-			bt, br, bw := sharedCC.Trips(), sharedCC.Reads(), sharedCC.Writes()
+			// Delta counting on shared conn is only valid at concurrency=1.
+			var bt, br, bw int
+			if c.Concurrency == 1 {
+				bt, br, bw = sharedCC.Trips(), sharedCC.Reads(), sharedCC.Writes()
+			}
 			start := time.Now()
 			for i := 0; i < c.Commands; i++ {
 				sess, err := sharedConn.NewSession()
@@ -171,7 +175,9 @@ func SSH(c Config) []stats.Result {
 					return errDuration
 				}
 			}
-			reuseC.recordConnDelta(idx, sharedCC, bt, br, bw)
+			if c.Concurrency == 1 {
+				reuseC.recordConnDelta(idx, sharedCC, bt, br, bw)
+			}
 			return time.Since(start)
 		})
 		sharedConn.Close()
@@ -245,7 +251,10 @@ func SSH(c Config) []stats.Result {
 		}
 		ptyReuseC := newCounters(c.Iterations)
 		ptyReuseTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
-			bt, br, bw := ptyCC.Trips(), ptyCC.Reads(), ptyCC.Writes()
+			var bt, br, bw int
+			if c.Concurrency == 1 {
+				bt, br, bw = ptyCC.Trips(), ptyCC.Reads(), ptyCC.Writes()
+			}
 			start := time.Now()
 			sess, err := ptyConn.NewSession()
 			if err != nil {
@@ -256,7 +265,9 @@ func SSH(c Config) []stats.Result {
 				log.Printf("ssh pty-reuse: %v", err)
 				return errDuration
 			}
-			ptyReuseC.recordConnDelta(idx, ptyCC, bt, br, bw)
+			if c.Concurrency == 1 {
+				ptyReuseC.recordConnDelta(idx, ptyCC, bt, br, bw)
+			}
 			return time.Since(start)
 		})
 		ptyConn.Close()
@@ -339,7 +350,7 @@ func HTTPS(c Config) []stats.Result {
 	keepC := newCounters(c.Iterations)
 	reuseTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
 		var bt, br, bw int
-		if *keepCC != nil {
+		if c.Concurrency == 1 && *keepCC != nil {
 			bt, br, bw = (*keepCC).Trips(), (*keepCC).Reads(), (*keepCC).Writes()
 		}
 		start := time.Now()
@@ -349,7 +360,7 @@ func HTTPS(c Config) []stats.Result {
 				return errDuration
 			}
 		}
-		if *keepCC != nil {
+		if c.Concurrency == 1 && *keepCC != nil {
 			keepC.recordConnDelta(idx, *keepCC, bt, br, bw)
 		}
 		return time.Since(start)
@@ -364,7 +375,7 @@ func HTTPS(c Config) []stats.Result {
 	batchC := newCounters(c.Iterations)
 	batchTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
 		var bt, br, bw int
-		if *batchCC != nil {
+		if c.Concurrency == 1 && *batchCC != nil {
 			bt, br, bw = (*batchCC).Trips(), (*batchCC).Reads(), (*batchCC).Writes()
 		}
 		start := time.Now()
@@ -385,7 +396,7 @@ func HTTPS(c Config) []stats.Result {
 			log.Printf("https batch: HTTP %d", resp.StatusCode)
 			return errDuration
 		}
-		if *batchCC != nil {
+		if c.Concurrency == 1 && *batchCC != nil {
 			batchC.recordConnDelta(idx, *batchCC, bt, br, bw)
 		}
 		return time.Since(start)
@@ -412,7 +423,7 @@ func HTTPS(c Config) []stats.Result {
 		multiC := newCounters(c.Iterations)
 		multiTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
 			var bt, br, bw int
-			if *multiCC != nil {
+			if c.Concurrency == 1 && *multiCC != nil {
 				bt, br, bw = (*multiCC).Trips(), (*multiCC).Reads(), (*multiCC).Writes()
 			}
 			start := time.Now()
@@ -433,7 +444,7 @@ func HTTPS(c Config) []stats.Result {
 				log.Printf("https multi: HTTP %d", resp.StatusCode)
 				return errDuration
 			}
-			if *multiCC != nil {
+			if c.Concurrency == 1 && *multiCC != nil {
 				multiC.recordConnDelta(idx, *multiCC, bt, br, bw)
 			}
 			return time.Since(start)

@@ -210,7 +210,8 @@ func (b *BenchCmd) Run() error {
 		Hostname:    hostname,
 	}
 
-	// pktWrap runs a benchmark function and attaches per-mode packet counts.
+	// pktWrap runs a benchmark function and attaches packet counts.
+	// Counts are total for the transport (all modes combined).
 	pktWrap := func(fn func() []stats.Result) []stats.Result {
 		if pc == nil {
 			return fn()
@@ -218,17 +219,11 @@ func (b *BenchCmd) Run() error {
 		pc.Reset()
 		rs := fn()
 		totalIn, totalOut := pc.Snapshot()
-		// Distribute total packets evenly across modes (each mode runs
-		// sequentially within a transport function).
-		// For per-mode granularity, each mode would need its own snapshot,
-		// but total-per-transport is sufficient for blog charts.
+		// Store total packets on the first result; others get zero.
+		// Per-mode granularity would require snapshots inside each bench function.
 		if len(rs) > 0 {
-			perIn := totalIn / len(rs)
-			perOut := totalOut / len(rs)
-			for i := range rs {
-				rs[i].PacketsIn = perIn
-				rs[i].PacketsOut = perOut
-			}
+			rs[0].PacketsIn = totalIn
+			rs[0].PacketsOut = totalOut
 		}
 		return rs
 	}

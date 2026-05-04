@@ -2,7 +2,6 @@
 package stats
 
 import (
-	"fmt"
 	"log"
 	"math"
 	"sort"
@@ -163,7 +162,7 @@ func RunParallel(iterations, concurrency int, fn func(idx int) time.Duration) []
 func GenerateExecPayload(n int) string {
 	var b strings.Builder
 	for i := 0; i < n; i++ {
-		fmt.Fprintf(&b, "show version\n")
+		b.WriteString("show version\n")
 	}
 	return b.String()
 }
