@@ -66,13 +66,58 @@ func sshDialCounted(addr string, cfg *ssh.ClientConfig) (*ssh.Client, *rtcount.C
 	return ssh.NewClient(sconn, chans, reqs), cc, nil
 }
 
+// counters collects per-iteration stats from parallel slices.
+type counters struct {
+	trips, reads, writes []int
+}
+
+func newCounters(n int) counters {
+	return counters{make([]int, n), make([]int, n), make([]int, n)}
+}
+
+func (c counters) recordConn(idx int, cc *rtcount.Conn) {
+	c.trips[idx] = cc.Trips()
+	c.reads[idx] = cc.Reads()
+	c.writes[idx] = cc.Writes()
+}
+
+func (c counters) recordConnDelta(idx int, cc *rtcount.Conn, bt, br, bw int) {
+	c.trips[idx] = cc.Trips() - bt
+	c.reads[idx] = cc.Reads() - br
+	c.writes[idx] = cc.Writes() - bw
+}
+
+func (c counters) recordConns(idx int, conns []*rtcount.Conn) {
+	for _, cc := range conns {
+		c.trips[idx] += cc.Trips()
+		c.reads[idx] += cc.Reads()
+		c.writes[idx] += cc.Writes()
+	}
+}
+
+func (c counters) recordPacket(idx int, pc *rtcount.PacketConn) {
+	c.trips[idx] = pc.Trips()
+	c.reads[idx] = pc.Reads()
+	c.writes[idx] = pc.Writes()
+}
+
+func (c counters) recordPacketDelta(idx int, pc *rtcount.PacketConn, bt, br, bw int) {
+	c.trips[idx] = pc.Trips() - bt
+	c.reads[idx] = pc.Reads() - br
+	c.writes[idx] = pc.Writes() - bw
+}
+
+func (c counters) iter() stats.IterCounts {
+	return stats.IterCounts{Trips: c.trips, Reads: c.reads, Writes: c.writes}
+}
+
 // SSH runs all SSH benchmark modes and returns the results.
 func SSH(c Config) []stats.Result {
 	log.Printf("Benchmarking SSH (%d iterations, %d concurrency, %d cmds/iter)", c.Iterations, c.Concurrency, c.Commands)
 	cfg := sshConfig(c.User, c.Pass)
 
 	// Mode 1: fresh connection per iteration
-	freshTrips := make([]int, c.Iterations)
+	freshC := newCounters(c.Iterations)
 	freshTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
 		start := time.Now()
 		conn, cc, err := sshDialCounted(c.Addr, cfg)
@@ -94,14 +139,14 @@ func SSH(c Config) []stats.Result {
 				return errDuration
 			}
 		}
-		freshTrips[idx] = cc.Trips()
+		freshC.recordConn(idx, cc)
 		return time.Since(start)
 	})
 
 	// Mode 2: reuse one connection (ControlMaster-style)
 	sharedConn, sharedCC, err := sshDialCounted(c.Addr, cfg)
 	var reuseTimes []time.Duration
-	var reuseTrips []int
+	var reuseC counters
 	if err != nil {
 		log.Printf("ssh reuse dial: %v (skipping reuse test)", err)
 	} else {
@@ -109,10 +154,9 @@ func SSH(c Config) []stats.Result {
 			_, _ = sess.Output("show version")
 			sess.Close()
 		}
-		baseTrips := sharedCC.Trips()
-		reuseTrips = make([]int, c.Iterations)
+		reuseC = newCounters(c.Iterations)
 		reuseTimes = stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
-			before := sharedCC.Trips()
+			bt, br, bw := sharedCC.Trips(), sharedCC.Reads(), sharedCC.Writes()
 			start := time.Now()
 			for i := 0; i < c.Commands; i++ {
 				sess, err := sharedConn.NewSession()
@@ -127,16 +171,15 @@ func SSH(c Config) []stats.Result {
 					return errDuration
 				}
 			}
-			reuseTrips[idx] = sharedCC.Trips() - before
+			reuseC.recordConnDelta(idx, sharedCC, bt, br, bw)
 			return time.Since(start)
 		})
-		_ = baseTrips
 		sharedConn.Close()
 	}
 
 	// Mode 3: batch exec
 	batchPayload := stats.GenerateExecPayload(c.Commands)
-	batchTrips := make([]int, c.Iterations)
+	batchC := newCounters(c.Iterations)
 	batchTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
 		start := time.Now()
 		conn, cc, err := sshDialCounted(c.Addr, cfg)
@@ -156,21 +199,21 @@ func SSH(c Config) []stats.Result {
 			log.Printf("ssh batch exec: %v", err)
 			return errDuration
 		}
-		batchTrips[idx] = cc.Trips()
+		batchC.recordConn(idx, cc)
 		return time.Since(start)
 	})
 
 	results := []stats.Result{
-		stats.Summarize("ssh", "fresh-conn", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, freshTimes, freshTrips),
+		stats.Summarize("ssh", "fresh-conn", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, freshTimes, freshC.iter()),
 	}
 	if reuseTimes != nil {
-		results = append(results, stats.Summarize("ssh", "reuse-conn", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, reuseTimes, reuseTrips))
+		results = append(results, stats.Summarize("ssh", "reuse-conn", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, reuseTimes, reuseC.iter()))
 	}
-	results = append(results, stats.Summarize("ssh", "batch-exec", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, batchTimes, batchTrips))
+	results = append(results, stats.Summarize("ssh", "batch-exec", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, batchTimes, batchC.iter()))
 
 	// Mode 4: PTY/shell — fresh connection per iteration
 	prompt := c.Hostname + "#"
-	ptyFreshTrips := make([]int, c.Iterations)
+	ptyFreshC := newCounters(c.Iterations)
 	ptyFreshTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
 		start := time.Now()
 		conn, cc, err := sshDialCounted(c.Addr, cfg)
@@ -188,10 +231,10 @@ func SSH(c Config) []stats.Result {
 			log.Printf("ssh pty-fresh: %v", err)
 			return errDuration
 		}
-		ptyFreshTrips[idx] = cc.Trips()
+		ptyFreshC.recordConn(idx, cc)
 		return time.Since(start)
 	})
-	results = append(results, stats.Summarize("ssh", "pty-fresh", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, ptyFreshTimes, ptyFreshTrips))
+	results = append(results, stats.Summarize("ssh", "pty-fresh", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, ptyFreshTimes, ptyFreshC.iter()))
 
 	// Mode 5: PTY/shell — reuse connection
 	ptyConn, ptyCC, err := sshDialCounted(c.Addr, cfg)
@@ -200,9 +243,9 @@ func SSH(c Config) []stats.Result {
 			_ = ptyExecCmds(sess, prompt, 1)
 			sess.Close()
 		}
-		ptyReuseTrips := make([]int, c.Iterations)
+		ptyReuseC := newCounters(c.Iterations)
 		ptyReuseTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
-			before := ptyCC.Trips()
+			bt, br, bw := ptyCC.Trips(), ptyCC.Reads(), ptyCC.Writes()
 			start := time.Now()
 			sess, err := ptyConn.NewSession()
 			if err != nil {
@@ -213,11 +256,11 @@ func SSH(c Config) []stats.Result {
 				log.Printf("ssh pty-reuse: %v", err)
 				return errDuration
 			}
-			ptyReuseTrips[idx] = ptyCC.Trips() - before
+			ptyReuseC.recordConnDelta(idx, ptyCC, bt, br, bw)
 			return time.Since(start)
 		})
 		ptyConn.Close()
-		results = append(results, stats.Summarize("ssh", "pty-reuse", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, ptyReuseTimes, ptyReuseTrips))
+		results = append(results, stats.Summarize("ssh", "pty-reuse", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, ptyReuseTimes, ptyReuseC.iter()))
 	}
 
 	return results
@@ -255,7 +298,7 @@ func HTTPS(c Config) []stats.Result {
 	}
 
 	// Mode 1: fresh connection per iteration
-	freshTrips := make([]int, c.Iterations)
+	freshC := newCounters(c.Iterations)
 	freshTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
 		start := time.Now()
 		var conns []*rtcount.Conn
@@ -284,11 +327,7 @@ func HTTPS(c Config) []stats.Result {
 				return errDuration
 			}
 		}
-		total := 0
-		for _, cc := range conns {
-			total += cc.Trips()
-		}
-		freshTrips[idx] = total
+		freshC.recordConns(idx, conns)
 		return time.Since(start)
 	})
 
@@ -297,11 +336,11 @@ func HTTPS(c Config) []stats.Result {
 	keepClient := &http.Client{Transport: keepTr, Timeout: 30 * time.Second}
 	_ = doHTTPExec(keepClient, c.Addr, c.User, c.Pass)
 
-	keepTrips := make([]int, c.Iterations)
+	keepC := newCounters(c.Iterations)
 	reuseTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
-		var before int
+		var bt, br, bw int
 		if *keepCC != nil {
-			before = (*keepCC).Trips()
+			bt, br, bw = (*keepCC).Trips(), (*keepCC).Reads(), (*keepCC).Writes()
 		}
 		start := time.Now()
 		for i := 0; i < c.Commands; i++ {
@@ -311,7 +350,7 @@ func HTTPS(c Config) []stats.Result {
 			}
 		}
 		if *keepCC != nil {
-			keepTrips[idx] = (*keepCC).Trips() - before
+			keepC.recordConnDelta(idx, *keepCC, bt, br, bw)
 		}
 		return time.Since(start)
 	})
@@ -322,11 +361,11 @@ func HTTPS(c Config) []stats.Result {
 	batchClient := &http.Client{Transport: batchTr, Timeout: 30 * time.Second}
 	_ = doHTTPExec(batchClient, c.Addr, c.User, c.Pass)
 
-	batchTrips := make([]int, c.Iterations)
+	batchC := newCounters(c.Iterations)
 	batchTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
-		var before int
+		var bt, br, bw int
 		if *batchCC != nil {
-			before = (*batchCC).Trips()
+			bt, br, bw = (*batchCC).Trips(), (*batchCC).Reads(), (*batchCC).Writes()
 		}
 		start := time.Now()
 		url := fmt.Sprintf("https://%s/admin/config", c.Addr)
@@ -347,15 +386,15 @@ func HTTPS(c Config) []stats.Result {
 			return errDuration
 		}
 		if *batchCC != nil {
-			batchTrips[idx] = (*batchCC).Trips() - before
+			batchC.recordConnDelta(idx, *batchCC, bt, br, bw)
 		}
 		return time.Since(start)
 	})
 
 	results := []stats.Result{
-		stats.Summarize("https", "fresh-conn", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, freshTimes, freshTrips),
-		stats.Summarize("https", "keep-alive", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, reuseTimes, keepTrips),
-		stats.Summarize("https", "batch-post", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, batchTimes, batchTrips),
+		stats.Summarize("https", "fresh-conn", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, freshTimes, freshC.iter()),
+		stats.Summarize("https", "keep-alive", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, reuseTimes, keepC.iter()),
+		stats.Summarize("https", "batch-post", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, batchTimes, batchC.iter()),
 	}
 
 	// Mode 4: multi-command GET (ASA slash syntax)
@@ -370,11 +409,11 @@ func HTTPS(c Config) []stats.Result {
 		multiClient := &http.Client{Transport: multiTr, Timeout: 30 * time.Second}
 		_ = doHTTPExec(multiClient, c.Addr, c.User, c.Pass)
 
-		multiTrips := make([]int, c.Iterations)
+		multiC := newCounters(c.Iterations)
 		multiTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
-			var before int
+			var bt, br, bw int
 			if *multiCC != nil {
-				before = (*multiCC).Trips()
+				bt, br, bw = (*multiCC).Trips(), (*multiCC).Reads(), (*multiCC).Writes()
 			}
 			start := time.Now()
 			url := fmt.Sprintf("https://%s/admin/exec/%s", c.Addr, multiPath)
@@ -395,11 +434,11 @@ func HTTPS(c Config) []stats.Result {
 				return errDuration
 			}
 			if *multiCC != nil {
-				multiTrips[idx] = (*multiCC).Trips() - before
+				multiC.recordConnDelta(idx, *multiCC, bt, br, bw)
 			}
 			return time.Since(start)
 		})
-		results = append(results, stats.Summarize("https", "multi-cmd", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, multiTimes, multiTrips))
+		results = append(results, stats.Summarize("https", "multi-cmd", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, multiTimes, multiC.iter()))
 	}
 
 	return results
@@ -419,7 +458,7 @@ func Proxy(c ProxyConfig) []stats.Result {
 	tlsCfg := &tls.Config{InsecureSkipVerify: true}
 	payload := stats.GenerateExecPayload(c.Commands)
 
-	doProxy := func(addr string) (time.Duration, int) {
+	doProxy := func(addr string) (time.Duration, int, int, int) {
 		start := time.Now()
 		var cc *rtcount.Conn
 		tr := &http.Transport{
@@ -442,43 +481,43 @@ func Proxy(c ProxyConfig) []stats.Result {
 		url := fmt.Sprintf("https://%s/admin/config", addr)
 		req, err := http.NewRequest("POST", url, strings.NewReader(payload))
 		if err != nil {
-			return errDuration, 0
+			return errDuration, 0, 0, 0
 		}
 		req.SetBasicAuth(c.User, c.Pass)
 		resp, err := client.Do(req)
 		if err != nil {
 			log.Printf("proxy: %v", err)
-			return errDuration, 0
+			return errDuration, 0, 0, 0
 		}
 		_, _ = io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			log.Printf("proxy: HTTP %d", resp.StatusCode)
-			return errDuration, 0
+			return errDuration, 0, 0, 0
 		}
-		var trips int
+		var trips, reads, writes int
 		if cc != nil {
-			trips = cc.Trips()
+			trips, reads, writes = cc.Trips(), cc.Reads(), cc.Writes()
 		}
-		return time.Since(start), trips
+		return time.Since(start), trips, reads, writes
 	}
 
-	freshTrips := make([]int, c.Iterations)
+	freshC := newCounters(c.Iterations)
 	freshTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
-		d, t := doProxy(c.FreshAddr)
-		freshTrips[idx] = t
+		d, t, r, w := doProxy(c.FreshAddr)
+		freshC.trips[idx], freshC.reads[idx], freshC.writes[idx] = t, r, w
 		return d
 	})
-	pooledTrips := make([]int, c.Iterations)
+	pooledC := newCounters(c.Iterations)
 	pooledTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
-		d, t := doProxy(c.PooledAddr)
-		pooledTrips[idx] = t
+		d, t, r, w := doProxy(c.PooledAddr)
+		pooledC.trips[idx], pooledC.reads[idx], pooledC.writes[idx] = t, r, w
 		return d
 	})
 
 	return []stats.Result{
-		stats.Summarize("proxy", "fresh-ssh", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, freshTimes, freshTrips),
-		stats.Summarize("proxy", "pooled-ssh", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, pooledTimes, pooledTrips),
+		stats.Summarize("proxy", "fresh-ssh", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, freshTimes, freshC.iter()),
+		stats.Summarize("proxy", "pooled-ssh", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, pooledTimes, pooledC.iter()),
 	}
 }
 

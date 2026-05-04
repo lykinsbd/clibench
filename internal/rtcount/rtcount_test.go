@@ -12,7 +12,6 @@ func TestConnTrips(t *testing.T) {
 
 	cc := Wrap(c)
 
-	// Write then read = 1 trip
 	go func() {
 		buf := make([]byte, 5)
 		_, _ = s.Read(buf)
@@ -26,8 +25,14 @@ func TestConnTrips(t *testing.T) {
 	if got := cc.Trips(); got != 1 {
 		t.Errorf("Trips() = %d, want 1", got)
 	}
+	if got := cc.Reads(); got != 1 {
+		t.Errorf("Reads() = %d, want 1", got)
+	}
+	if got := cc.Writes(); got != 1 {
+		t.Errorf("Writes() = %d, want 1", got)
+	}
 
-	// Another write→read = 2 total
+	// Another write→read = 2 total trips, 2 reads, 2 writes
 	go func() {
 		buf := make([]byte, 4)
 		_, _ = s.Read(buf)
@@ -39,6 +44,12 @@ func TestConnTrips(t *testing.T) {
 
 	if got := cc.Trips(); got != 2 {
 		t.Errorf("Trips() = %d, want 2", got)
+	}
+	if got := cc.Reads(); got != 2 {
+		t.Errorf("Reads() = %d, want 2", got)
+	}
+	if got := cc.Writes(); got != 2 {
+		t.Errorf("Writes() = %d, want 2", got)
 	}
 }
 
@@ -56,14 +67,19 @@ func TestConnConsecutiveWritesCountOnce(t *testing.T) {
 		_, _ = s.Write([]byte("ok"))
 	}()
 
-	// Two consecutive writes should not increment trips
 	_, _ = cc.Write([]byte("a"))
 	_, _ = cc.Write([]byte("b"))
 	buf := make([]byte, 2)
 	_, _ = cc.Read(buf)
 
 	if got := cc.Trips(); got != 1 {
-		t.Errorf("Trips() = %d, want 1 (consecutive writes should count as one direction)", got)
+		t.Errorf("Trips() = %d, want 1", got)
+	}
+	if got := cc.Writes(); got != 2 {
+		t.Errorf("Writes() = %d, want 2 (each Write call counted)", got)
+	}
+	if got := cc.Reads(); got != 1 {
+		t.Errorf("Reads() = %d, want 1", got)
 	}
 }
 
@@ -81,7 +97,6 @@ func TestPacketConnTrips(t *testing.T) {
 
 	cc := WrapPacket(a)
 
-	// Write to b, then read response
 	go func() {
 		buf := make([]byte, 64)
 		n, addr, _ := b.ReadFrom(buf)
@@ -94,5 +109,11 @@ func TestPacketConnTrips(t *testing.T) {
 
 	if got := cc.Trips(); got != 1 {
 		t.Errorf("Trips() = %d, want 1", got)
+	}
+	if got := cc.Reads(); got != 1 {
+		t.Errorf("Reads() = %d, want 1", got)
+	}
+	if got := cc.Writes(); got != 1 {
+		t.Errorf("Writes() = %d, want 1", got)
 	}
 }
