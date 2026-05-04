@@ -98,8 +98,9 @@ func (b *BenchCmd) Run() error {
 		go func() {
 			<-sigCh
 			netem.Teardown()
-			os.Exit(1)
+			os.Exit(0)
 		}()
+		defer signal.Stop(sigCh)
 
 		log.Printf("tc netem: %dms one-way on ports %v, %dms on ports %v",
 			delay.Milliseconds(), wanPorts, campusDelay.Milliseconds(), campusPorts)

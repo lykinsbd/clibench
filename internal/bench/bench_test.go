@@ -79,6 +79,15 @@ func assertResults(t *testing.T, results []stats.Result, transport string, minMo
 		if r.AvgMs <= 0 {
 			t.Errorf("%s/%s: avg_ms should be > 0, got %f", r.Transport, r.Operation, r.AvgMs)
 		}
+		if r.RoundTrips <= 0 {
+			t.Errorf("%s/%s: round_trips should be > 0, got %d", r.Transport, r.Operation, r.RoundTrips)
+		}
+		if r.ReadOps <= 0 {
+			t.Errorf("%s/%s: read_ops should be > 0, got %d", r.Transport, r.Operation, r.ReadOps)
+		}
+		if r.WriteOps <= 0 {
+			t.Errorf("%s/%s: write_ops should be > 0, got %d", r.Transport, r.Operation, r.WriteOps)
+		}
 	}
 }
 
