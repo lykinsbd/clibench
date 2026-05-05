@@ -6,6 +6,7 @@ import (
 
 	"github.com/lykinsbd/clibench/internal/headend"
 	"github.com/lykinsbd/clibench/internal/proxy"
+	"github.com/lykinsbd/clibench/internal/testutil"
 )
 
 func setupTunnel(t *testing.T) (httpsHeadendAddr, h3HeadendAddr string) {
@@ -48,9 +49,9 @@ func setupTunnel(t *testing.T) (httpsHeadendAddr, h3HeadendAddr string) {
 	go hH3.ListenAndServe()
 	t.Cleanup(func() { hH3.Close() })
 
-	waitTCP(t, siteLn.Addr().String())
-	waitTCP(t, hHTTPSLn.Addr().String())
-	waitTCP(t, hH3Ln.Addr().String())
+	testutil.WaitTCP(t, siteLn.Addr().String())
+	testutil.WaitTCP(t, hHTTPSLn.Addr().String())
+	testutil.WaitTCP(t, hH3Ln.Addr().String())
 	return hHTTPSLn.Addr().String(), hH3Ln.Addr().String()
 }
 

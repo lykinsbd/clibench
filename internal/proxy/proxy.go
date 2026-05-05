@@ -177,7 +177,11 @@ func (s *Server) ListenAndServeH3() error {
 		}
 	}
 	log.Printf("Proxy HTTP/3 listening on %s → SSH backend %s (pooled=%v)", s.packetConn.LocalAddr(), s.backendAddr, s.pooled)
-	return s.h3srv.Serve(s.packetConn)
+	err = s.h3srv.Serve(s.packetConn)
+	if err != nil && err.Error() == "server closed" {
+		return nil
+	}
+	return err
 }
 
 func (s *Server) getSSH() (*ssh.Client, bool, error) {
