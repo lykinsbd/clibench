@@ -54,7 +54,7 @@ func TestPercentileKnownValues(t *testing.T) {
 
 func TestSummarizeBasic(t *testing.T) {
 	times := []time.Duration{2 * time.Millisecond, 4 * time.Millisecond, 6 * time.Millisecond}
-	r := Summarize("t", "op", 1, 3, 1, "local", 0, times)
+	r := Summarize(SummarizeConfig{Transport: "t", Operation: "op", Commands: 1, Iterations: 3, Concurrency: 1, Profile: "local", RTTms: 0, Times: times})
 	if r.Errors != 0 {
 		t.Errorf("errors = %d", r.Errors)
 	}
@@ -77,7 +77,7 @@ func TestStddevKnownValues(t *testing.T) {
 	for i, v := range vals {
 		times[i] = time.Duration(v) * time.Millisecond
 	}
-	r := Summarize("t", "op", 1, 8, 1, "local", 0, times)
+	r := Summarize(SummarizeConfig{Transport: "t", Operation: "op", Commands: 1, Iterations: 8, Concurrency: 1, Profile: "local", RTTms: 0, Times: times})
 	want := math.Sqrt(32.0 / 7.0) // ≈ 2.1381
 	if math.Abs(r.StddevMs-want) > 0.01 {
 		t.Errorf("stddev = %v, want %v", r.StddevMs, want)
@@ -86,7 +86,7 @@ func TestStddevKnownValues(t *testing.T) {
 
 func TestSummarizeAllErrors(t *testing.T) {
 	times := []time.Duration{ErrDuration, ErrDuration, ErrDuration}
-	r := Summarize("t", "op", 1, 3, 1, "local", 0, times)
+	r := Summarize(SummarizeConfig{Transport: "t", Operation: "op", Commands: 1, Iterations: 3, Concurrency: 1, Profile: "local", RTTms: 0, Times: times})
 	if r.Errors != 3 {
 		t.Errorf("errors = %d, want 3", r.Errors)
 	}
@@ -97,7 +97,7 @@ func TestSummarizeAllErrors(t *testing.T) {
 
 func TestSummarizePartialErrors(t *testing.T) {
 	times := []time.Duration{ErrDuration, 2 * time.Millisecond, 4 * time.Millisecond}
-	r := Summarize("t", "op", 1, 3, 1, "local", 0, times)
+	r := Summarize(SummarizeConfig{Transport: "t", Operation: "op", Commands: 1, Iterations: 3, Concurrency: 1, Profile: "local", RTTms: 0, Times: times})
 	if r.Errors != 1 {
 		t.Errorf("errors = %d, want 1", r.Errors)
 	}
@@ -108,7 +108,7 @@ func TestSummarizePartialErrors(t *testing.T) {
 
 func TestErrDurationSentinel(t *testing.T) {
 	times := []time.Duration{ErrDuration, 5 * time.Millisecond, ErrDuration, 10 * time.Millisecond}
-	r := Summarize("t", "op", 1, 4, 1, "local", 0, times)
+	r := Summarize(SummarizeConfig{Transport: "t", Operation: "op", Commands: 1, Iterations: 4, Concurrency: 1, Profile: "local", RTTms: 0, Times: times})
 	if r.Errors != 2 {
 		t.Errorf("errors = %d, want 2", r.Errors)
 	}
@@ -171,7 +171,7 @@ func TestSummarizeWithTrips(t *testing.T) {
 		Reads:  []int{10, 12, 10},
 		Writes: []int{8, 9, 8},
 	}
-	r := Summarize("ssh", "fresh-conn", 1, 3, 1, "local", 0, times, ic)
+	r := Summarize(SummarizeConfig{Transport: "ssh", Operation: "fresh-conn", Commands: 1, Iterations: 3, Concurrency: 1, Profile: "local", RTTms: 0, Times: times, Counts: ic})
 	if r.RoundTrips != 5 { // median of [5, 5, 7] = 5
 		t.Errorf("RoundTrips = %d, want 5", r.RoundTrips)
 	}
@@ -185,7 +185,7 @@ func TestSummarizeWithTrips(t *testing.T) {
 
 func TestSummarizeWithoutTrips(t *testing.T) {
 	times := []time.Duration{10 * time.Millisecond}
-	r := Summarize("https", "keep-alive", 1, 1, 1, "local", 0, times)
+	r := Summarize(SummarizeConfig{Transport: "https", Operation: "keep-alive", Commands: 1, Iterations: 1, Concurrency: 1, Profile: "local", RTTms: 0, Times: times})
 	if r.RoundTrips != 0 {
 		t.Errorf("RoundTrips = %d, want 0 when no counts provided", r.RoundTrips)
 	}

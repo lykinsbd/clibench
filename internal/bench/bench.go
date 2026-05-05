@@ -42,6 +42,21 @@ type Config struct {
 	Hostname    string // device hostname for PTY prompt detection
 }
 
+// summarize is a convenience wrapper around stats.Summarize using Config fields.
+func (c Config) summarize(transport, op string, times []time.Duration, counts counters) stats.Result {
+	return stats.Summarize(stats.SummarizeConfig{
+		Transport:   transport,
+		Operation:   op,
+		Commands:    c.Commands,
+		Iterations:  c.Iterations,
+		Concurrency: c.Concurrency,
+		Profile:     c.Profile,
+		RTTms:       c.RTTms,
+		Times:       times,
+		Counts:      counts.iter(),
+	})
+}
+
 func sshConfig(user, pass string) *ssh.ClientConfig {
 	return &ssh.ClientConfig{
 		User:            user,
@@ -206,12 +221,12 @@ func SSH(c Config) []stats.Result {
 	})
 
 	results := []stats.Result{
-		stats.Summarize("ssh", "fresh-conn", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, freshTimes, freshC.iter()),
+		c.summarize("ssh", "fresh-conn", freshTimes, freshC),
 	}
 	if reuseTimes != nil {
-		results = append(results, stats.Summarize("ssh", "reuse-conn", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, reuseTimes, reuseC.iter()))
+		results = append(results, c.summarize("ssh", "reuse-conn", reuseTimes, reuseC))
 	}
-	results = append(results, stats.Summarize("ssh", "batch-exec", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, batchTimes, batchC.iter()))
+	results = append(results, c.summarize("ssh", "batch-exec", batchTimes, batchC))
 
 	// Mode 4: PTY/shell — fresh connection per iteration
 	prompt := c.Hostname + "#"
@@ -223,7 +238,7 @@ func SSH(c Config) []stats.Result {
 		defer sess.Close()
 		return ptyExecCmds(sess, prompt, c.Commands)
 	})
-	results = append(results, stats.Summarize("ssh", "pty-fresh", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, ptyFreshTimes, ptyFreshC.iter()))
+	results = append(results, c.summarize("ssh", "pty-fresh", ptyFreshTimes, ptyFreshC))
 
 	// Mode 5: PTY/shell — reuse connection
 	ptyConn, ptyCC, err := sshDialCounted(c.Addr, cfg)
@@ -254,7 +269,7 @@ func SSH(c Config) []stats.Result {
 			return time.Since(start)
 		})
 		ptyConn.Close()
-		results = append(results, stats.Summarize("ssh", "pty-reuse", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, ptyReuseTimes, ptyReuseC.iter()))
+		results = append(results, c.summarize("ssh", "pty-reuse", ptyReuseTimes, ptyReuseC))
 	}
 
 	return results
@@ -389,9 +404,9 @@ func HTTPS(c Config) []stats.Result {
 	})
 
 	results := []stats.Result{
-		stats.Summarize("https", "fresh-conn", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, freshTimes, freshC.iter()),
-		stats.Summarize("https", "keep-alive", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, reuseTimes, keepC.iter()),
-		stats.Summarize("https", "batch-post", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, batchTimes, batchC.iter()),
+		c.summarize("https", "fresh-conn", freshTimes, freshC),
+		c.summarize("https", "keep-alive", reuseTimes, keepC),
+		c.summarize("https", "batch-post", batchTimes, batchC),
 	}
 
 	// Mode 4: multi-command GET (ASA slash syntax)
@@ -435,7 +450,7 @@ func HTTPS(c Config) []stats.Result {
 			}
 			return time.Since(start)
 		})
-		results = append(results, stats.Summarize("https", "multi-cmd", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, multiTimes, multiC.iter()))
+		results = append(results, c.summarize("https", "multi-cmd", multiTimes, multiC))
 	}
 
 	return results
@@ -513,8 +528,8 @@ func Proxy(c ProxyConfig) []stats.Result {
 	})
 
 	return []stats.Result{
-		stats.Summarize("proxy", "fresh-ssh", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, freshTimes, freshC.iter()),
-		stats.Summarize("proxy", "pooled-ssh", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, pooledTimes, pooledC.iter()),
+		c.summarize("proxy", "fresh-ssh", freshTimes, freshC),
+		c.summarize("proxy", "pooled-ssh", pooledTimes, pooledC),
 	}
 }
 

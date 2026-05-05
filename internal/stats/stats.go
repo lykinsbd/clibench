@@ -43,13 +43,27 @@ type IterCounts struct {
 	Writes []int
 }
 
+// SummarizeConfig holds the parameters for Summarize.
+type SummarizeConfig struct {
+	Transport   string
+	Operation   string
+	Commands    int
+	Iterations  int
+	Concurrency int
+	Profile     string
+	RTTms       float64
+	Times       []time.Duration
+	Counts      IterCounts
+}
+
 // Summarize computes statistics from a slice of durations.
-// An optional IterCounts provides per-iteration round-trip and packet counts;
-// median values are stored in the result.
-func Summarize(transport, op string, cmds, iterations, concurrency int, profile string, rttMs float64, times []time.Duration, counts ...IterCounts) Result {
-	valid := make([]float64, 0, len(times))
+func Summarize(cfg SummarizeConfig) Result {
+	transport, op := cfg.Transport, cfg.Operation
+	iterations := cfg.Iterations
+
+	valid := make([]float64, 0, len(cfg.Times))
 	errors := 0
-	for _, t := range times {
+	for _, t := range cfg.Times {
 		if t == ErrDuration {
 			errors++
 			continue
@@ -61,9 +75,9 @@ func Summarize(transport, op string, cmds, iterations, concurrency int, profile 
 	}
 	if len(valid) == 0 {
 		return Result{
-			Transport: transport, Operation: op, Commands: cmds,
-			Iterations: iterations, Errors: errors, Concurrency: concurrency,
-			Latency: profile, RTTms: rttMs,
+			Transport: transport, Operation: op, Commands: cfg.Commands,
+			Iterations: iterations, Errors: errors, Concurrency: cfg.Concurrency,
+			Latency: cfg.Profile, RTTms: cfg.RTTms,
 		}
 	}
 
@@ -87,19 +101,19 @@ func Summarize(transport, op string, cmds, iterations, concurrency int, profile 
 	}
 
 	var ic IterCounts
-	if len(counts) > 0 {
-		ic = counts[0]
+	if len(cfg.Counts.Trips) > 0 || len(cfg.Counts.Reads) > 0 {
+		ic = cfg.Counts
 	}
 
 	return Result{
 		Transport:   transport,
 		Operation:   op,
-		Commands:    cmds,
+		Commands:    cfg.Commands,
 		Iterations:  iterations,
 		Errors:      errors,
-		Concurrency: concurrency,
-		Latency:     profile,
-		RTTms:       rttMs,
+		Concurrency: cfg.Concurrency,
+		Latency:     cfg.Profile,
+		RTTms:       cfg.RTTms,
 		RoundTrips:  medianInts(ic.Trips),
 		ReadOps:     medianInts(ic.Reads),
 		WriteOps:    medianInts(ic.Writes),

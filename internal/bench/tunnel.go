@@ -58,7 +58,7 @@ func tunnelModes(c TunnelConfig, cfg *ssh.ClientConfig, addr, op string) []stats
 	})
 
 	return []stats.Result{
-		stats.Summarize("tunnel", op, c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, freshTimes, freshC.iter()),
-		stats.Summarize("tunnel", op+"-batch", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, batchTimes, batchC.iter()),
+		c.summarize("tunnel", op, freshTimes, freshC),
+		c.summarize("tunnel", op+"-batch", batchTimes, batchC),
 	}
 }

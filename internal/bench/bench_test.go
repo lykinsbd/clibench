@@ -14,6 +14,19 @@ import (
 	"github.com/lykinsbd/clibench/internal/stats"
 )
 
+func waitTCP(t *testing.T, addr string) {
+	t.Helper()
+	for i := 0; i < 100; i++ {
+		c, err := net.DialTimeout("tcp", addr, 50*time.Millisecond)
+		if err == nil {
+			c.Close()
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("server %s not ready", addr)
+}
+
 func setupServers(t *testing.T) (sshAddr, httpsAddr string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -37,6 +50,7 @@ func setupServers(t *testing.T) (sshAddr, httpsAddr string) {
 	}
 	sshSrv.SetListener(sshLn)
 	go sshSrv.ListenAndServe()
+	t.Cleanup(func() { sshSrv.Close() })
 
 	httpsLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -45,8 +59,10 @@ func setupServers(t *testing.T) (sshAddr, httpsAddr string) {
 	httpSrv := httpserver.New(httpsLn.Addr().String(), dev)
 	httpSrv.SetListener(httpsLn)
 	go httpSrv.ListenAndServeTLS()
+	t.Cleanup(func() { httpSrv.Close() })
 
-	time.Sleep(200 * time.Millisecond)
+	waitTCP(t, sshLn.Addr().String())
+	waitTCP(t, httpsLn.Addr().String())
 	return sshLn.Addr().String(), httpsLn.Addr().String()
 }
 
@@ -129,6 +145,7 @@ func TestProxy(t *testing.T) {
 	pFresh := proxy.New(freshLn.Addr().String(), sshAddr, "admin", "admin", false)
 	pFresh.SetListener(freshLn)
 	go pFresh.ListenAndServeTLS()
+	t.Cleanup(func() { pFresh.Close() })
 
 	pooledLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -137,8 +154,10 @@ func TestProxy(t *testing.T) {
 	pPooled := proxy.New(pooledLn.Addr().String(), sshAddr, "admin", "admin", true)
 	pPooled.SetListener(pooledLn)
 	go pPooled.ListenAndServeTLS()
+	t.Cleanup(func() { pPooled.Close() })
 
-	time.Sleep(200 * time.Millisecond)
+	waitTCP(t, freshLn.Addr().String())
+	waitTCP(t, pooledLn.Addr().String())
 
 	results := Proxy(ProxyConfig{
 		Config:     baseCfg(""),
