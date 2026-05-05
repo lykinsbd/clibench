@@ -56,50 +56,69 @@ func (b *BenchCmd) has(t string) bool {
 	return false
 }
 
-// Run executes the benchmark.
-func (b *BenchCmd) Run() error {
+// benchEnv holds all addresses computed from BenchCmd ports.
+type benchEnv struct {
+	sshAddr             string
+	httpsAddr           string
+	http3Addr           string
+	backendSSHPort      int
+	backendSSHAddr      string
+	proxyAddr           string
+	proxyPooledAddr     string
+	headendHTTPSAddr    string
+	headendH3Addr       string
+	tunnelSiteHTTPSPort int
+	tunnelSiteHTTPSAddr string
+	tunnelSiteH3Port    int
+	tunnelSiteH3Addr    string
+	delay               time.Duration
+	campusDelay         time.Duration
+	rttMs               float64
+}
+
+func (b *BenchCmd) buildEnv() (*benchEnv, error) {
 	delay, ok := bench.LatencyProfiles[b.Latency]
 	if !ok {
-		return fmt.Errorf("unknown latency profile %q", b.Latency)
+		return nil, fmt.Errorf("unknown latency profile %q", b.Latency)
 	}
-	rttMs := float64(delay.Milliseconds()) * 2
-
-	sshAddr := fmt.Sprintf("localhost:%d", b.SSHPort)
-	httpsAddr := fmt.Sprintf("localhost:%d", b.HTTPSPort)
-	http3Addr := fmt.Sprintf("localhost:%d", b.HTTP3Port)
-
-	dev, err := device.New(hostname, b.User, b.Pass, b.Transcripts)
-	if err != nil {
-		return fmt.Errorf("device: %w", err)
+	e := &benchEnv{
+		sshAddr:             fmt.Sprintf("localhost:%d", b.SSHPort),
+		httpsAddr:           fmt.Sprintf("localhost:%d", b.HTTPSPort),
+		http3Addr:           fmt.Sprintf("localhost:%d", b.HTTP3Port),
+		backendSSHPort:      b.SSHPort + 1000,
+		backendSSHAddr:      fmt.Sprintf("localhost:%d", b.SSHPort+1000),
+		proxyAddr:           fmt.Sprintf("localhost:%d", b.ProxyPort),
+		proxyPooledAddr:     fmt.Sprintf("localhost:%d", b.ProxyPort+1),
+		headendHTTPSAddr:    fmt.Sprintf("localhost:%d", b.HeadendHTTPSPort),
+		headendH3Addr:       fmt.Sprintf("localhost:%d", b.HeadendH3Port),
+		tunnelSiteHTTPSPort: b.ProxyPort + 2,
+		tunnelSiteHTTPSAddr: fmt.Sprintf("localhost:%d", b.ProxyPort+2),
+		tunnelSiteH3Port:    b.ProxyPort + 3,
+		tunnelSiteH3Addr:    fmt.Sprintf("localhost:%d", b.ProxyPort+3),
+		delay:               delay,
+		campusDelay:         1 * time.Millisecond,
+		rttMs:               float64(delay.Milliseconds()) * 2,
 	}
+	return e, nil
+}
 
-	backendSSHPort := b.SSHPort + 1000
-	backendSSHAddr := fmt.Sprintf("localhost:%d", backendSSHPort)
-	proxyAddr := fmt.Sprintf("localhost:%d", b.ProxyPort)
-	proxyPooledAddr := fmt.Sprintf("localhost:%d", b.ProxyPort+1)
-	headendHTTPSAddr := fmt.Sprintf("localhost:%d", b.HeadendHTTPSPort)
-	headendH3Addr := fmt.Sprintf("localhost:%d", b.HeadendH3Port)
-	tunnelSiteHTTPSPort := b.ProxyPort + 2
-	tunnelSiteHTTPSAddr := fmt.Sprintf("localhost:%d", tunnelSiteHTTPSPort)
-	tunnelSiteH3Port := b.ProxyPort + 3
-	tunnelSiteH3Addr := fmt.Sprintf("localhost:%d", tunnelSiteH3Port)
-	campusDelay := 1 * time.Millisecond
-
-	if !b.Userspace && delay > 0 {
-		wanPorts := []int{b.SSHPort, b.HTTPSPort, b.HTTP3Port, b.ProxyPort, b.ProxyPort + 1, tunnelSiteHTTPSPort, tunnelSiteH3Port}
-		campusPorts := []int{backendSSHPort, b.HeadendHTTPSPort, b.HeadendH3Port}
-		if err := netem.Setup(delay, campusDelay, wanPorts, campusPorts); err != nil {
+func (b *BenchCmd) setupLatency(e *benchEnv) error {
+	if !b.Userspace && e.delay > 0 {
+		wanPorts := []int{b.SSHPort, b.HTTPSPort, b.HTTP3Port, b.ProxyPort, b.ProxyPort + 1, e.tunnelSiteHTTPSPort, e.tunnelSiteH3Port}
+		campusPorts := []int{e.backendSSHPort, b.HeadendHTTPSPort, b.HeadendH3Port}
+		if err := netem.Setup(e.delay, e.campusDelay, wanPorts, campusPorts); err != nil {
 			return fmt.Errorf("tc netem setup (requires sudo): %w", err)
 		}
-		defer netem.Teardown()
-
 		log.Printf("tc netem: %dms one-way on ports %v, %dms on ports %v",
-			delay.Milliseconds(), wanPorts, campusDelay.Milliseconds(), campusPorts)
-	} else if b.Userspace && delay > 0 {
+			e.delay.Milliseconds(), wanPorts, e.campusDelay.Milliseconds(), campusPorts)
+	} else if b.Userspace && e.delay > 0 {
 		log.Printf("Using userspace latency injection (less accurate than tc netem)")
 	}
+	return nil
+}
 
-	wrapListener := func(ln net.Listener, d time.Duration) net.Listener {
+func (b *BenchCmd) startServers(e *benchEnv, dev *device.Device) error {
+	wrapLn := func(ln net.Listener, d time.Duration) net.Listener {
 		if b.Userspace && d > 0 {
 			return &latencyPkg.Listener{Listener: ln, Delay: d}
 		}
@@ -116,7 +135,7 @@ func (b *BenchCmd) Run() error {
 			ln.Close()
 			return fmt.Errorf("ssh %s: %w", addr, err)
 		}
-		srv.SetListener(wrapListener(ln, d))
+		srv.SetListener(wrapLn(ln, d))
 		go srv.ListenAndServe()
 		return nil
 	}
@@ -127,7 +146,7 @@ func (b *BenchCmd) Run() error {
 			return fmt.Errorf("listen %s: %w", addr, err)
 		}
 		srv := httpserver.New(addr, dev)
-		srv.SetListener(wrapListener(ln, d))
+		srv.SetListener(wrapLn(ln, d))
 		go srv.ListenAndServeTLS()
 		return nil
 	}
@@ -138,40 +157,11 @@ func (b *BenchCmd) Run() error {
 			return fmt.Errorf("listen %s: %w", addr, err)
 		}
 		p := proxy.New(addr, backend, b.User, b.Pass, pooled)
-		p.SetListener(wrapListener(ln, d))
+		p.SetListener(wrapLn(ln, d))
 		go p.ListenAndServeTLS()
 		return nil
 	}
 
-	if err := startSSH(sshAddr, delay); err != nil {
-		return err
-	}
-	if err := startHTTPS(httpsAddr, delay); err != nil {
-		return err
-	}
-	if err := startSSH(backendSSHAddr, campusDelay); err != nil {
-		return err
-	}
-	if err := startProxy(proxyAddr, backendSSHAddr, false, delay); err != nil {
-		return err
-	}
-	if err := startProxy(proxyPooledAddr, backendSSHAddr, true, delay); err != nil {
-		return err
-	}
-
-	h3srv := http3server.New(http3Addr, dev)
-	go h3srv.ListenAndServe()
-
-	// Tunnel: site proxy (HTTPS frontend, WAN delay) → backend SSH (campus delay)
-	if err := startProxy(tunnelSiteHTTPSAddr, backendSSHAddr, true, delay); err != nil {
-		return err
-	}
-
-	// Tunnel: site proxy HTTP/3 (WAN delay) → backend SSH (campus delay)
-	tunnelSiteH3 := proxy.New(tunnelSiteH3Addr, backendSSHAddr, b.User, b.Pass, true)
-	go tunnelSiteH3.ListenAndServeH3()
-
-	// Tunnel: headend proxies (SSH frontend, campus delay) → site proxy over WAN
 	startHeadend := func(addr, backendURL, transport string, d time.Duration) error {
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
@@ -182,53 +172,85 @@ func (b *BenchCmd) Run() error {
 			ln.Close()
 			return fmt.Errorf("headend %s: %w", addr, err)
 		}
-		srv.SetListener(wrapListener(ln, d))
+		srv.SetListener(wrapLn(ln, d))
 		go srv.ListenAndServe()
 		return nil
 	}
-	if err := startHeadend(headendHTTPSAddr, fmt.Sprintf("https://%s", tunnelSiteHTTPSAddr), "https", campusDelay); err != nil {
+
+	// Core servers
+	if err := startSSH(e.sshAddr, e.delay); err != nil {
 		return err
 	}
-	if err := startHeadend(headendH3Addr, fmt.Sprintf("https://%s", tunnelSiteH3Addr), "http3", campusDelay); err != nil {
+	if err := startHTTPS(e.httpsAddr, e.delay); err != nil {
+		return err
+	}
+	if err := startSSH(e.backendSSHAddr, e.campusDelay); err != nil {
+		return err
+	}
+	if err := startProxy(e.proxyAddr, e.backendSSHAddr, false, e.delay); err != nil {
+		return err
+	}
+	if err := startProxy(e.proxyPooledAddr, e.backendSSHAddr, true, e.delay); err != nil {
+		return err
+	}
+
+	h3srv := http3server.New(e.http3Addr, dev)
+	go h3srv.ListenAndServe()
+
+	// Tunnel site proxies
+	if err := startProxy(e.tunnelSiteHTTPSAddr, e.backendSSHAddr, true, e.delay); err != nil {
+		return err
+	}
+	tunnelSiteH3 := proxy.New(e.tunnelSiteH3Addr, e.backendSSHAddr, b.User, b.Pass, true)
+	go tunnelSiteH3.ListenAndServeH3()
+
+	// Tunnel headend proxies
+	if err := startHeadend(e.headendHTTPSAddr, "https://"+e.tunnelSiteHTTPSAddr, "https", e.campusDelay); err != nil {
+		return err
+	}
+	if err := startHeadend(e.headendH3Addr, "https://"+e.tunnelSiteH3Addr, "http3", e.campusDelay); err != nil {
 		return err
 	}
 
 	time.Sleep(500 * time.Millisecond)
-	log.Printf("Server ready — profile=%s, simulated RTT=%.0fms", b.Latency, rttMs)
+	log.Printf("Servers ready — profile=%s, simulated RTT=%.0fms", b.Latency, e.rttMs)
+	return nil
+}
 
-	// Start packet counter if we have root (same requirement as netem)
-	var pc *pktcount.Counter
-	if !b.Userspace && delay > 0 {
-		allPorts := []int{b.SSHPort, b.HTTPSPort, b.HTTP3Port, b.ProxyPort, b.ProxyPort + 1,
-			backendSSHPort, tunnelSiteHTTPSPort, tunnelSiteH3Port,
-			b.HeadendHTTPSPort, b.HeadendH3Port}
-		var err error
-		pc, err = pktcount.New(allPorts)
-		if err != nil {
-			log.Printf("packet counter unavailable: %v", err)
-		} else {
-			pc.Start()
-			defer pc.Stop()
-			log.Printf("AF_PACKET: counting packets on ports %v", allPorts)
-		}
+func (b *BenchCmd) setupPktCounter(e *benchEnv) (*pktcount.Counter, func()) {
+	if b.Userspace || e.delay == 0 {
+		return nil, func() {}
 	}
 
-	// Signal handler for clean shutdown — must be after all resource setup
-	// so it can clean up everything that defers would.
-	if !b.Userspace && delay > 0 {
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-		go func() {
-			<-sigCh
-			if pc != nil {
-				pc.Stop()
-			}
-			netem.Teardown()
-			os.Exit(0)
-		}()
-		defer signal.Stop(sigCh)
+	allPorts := []int{b.SSHPort, b.HTTPSPort, b.HTTP3Port, b.ProxyPort, b.ProxyPort + 1,
+		e.backendSSHPort, e.tunnelSiteHTTPSPort, e.tunnelSiteH3Port,
+		b.HeadendHTTPSPort, b.HeadendH3Port}
+	pc, err := pktcount.New(allPorts)
+	if err != nil {
+		log.Printf("packet counter unavailable: %v", err)
+		return nil, func() {}
 	}
+	pc.Start()
+	log.Printf("AF_PACKET: counting packets on ports %v", allPorts)
 
+	// Signal handler for clean shutdown
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		pc.Stop()
+		netem.Teardown()
+		os.Exit(0)
+	}()
+
+	cleanup := func() {
+		signal.Stop(sigCh)
+		pc.Stop()
+	}
+	return pc, cleanup
+}
+
+func (b *BenchCmd) runBenchmarks(e *benchEnv, pc *pktcount.Counter) []stats.Result {
 	cfg := bench.Config{
 		User:        b.User,
 		Pass:        b.Pass,
@@ -236,12 +258,10 @@ func (b *BenchCmd) Run() error {
 		Concurrency: b.Concurrency,
 		Commands:    b.Commands,
 		Profile:     b.Latency,
-		RTTms:       rttMs,
+		RTTms:       e.rttMs,
 		Hostname:    hostname,
 	}
 
-	// pktWrap runs a benchmark function and attaches packet counts.
-	// Counts are total for the transport (all modes combined).
 	pktWrap := func(fn func() []stats.Result) []stats.Result {
 		if pc == nil {
 			return fn()
@@ -249,8 +269,6 @@ func (b *BenchCmd) Run() error {
 		pc.Reset()
 		rs := fn()
 		totalIn, totalOut := pc.Snapshot()
-		// Store total packets on the first result; others get zero.
-		// Per-mode granularity would require snapshots inside each bench function.
 		if len(rs) > 0 {
 			rs[0].PacketsIn = totalIn
 			rs[0].PacketsOut = totalOut
@@ -262,35 +280,65 @@ func (b *BenchCmd) Run() error {
 
 	if b.has("ssh") {
 		c := cfg
-		c.Addr = sshAddr
+		c.Addr = e.sshAddr
 		results = append(results, pktWrap(func() []stats.Result { return bench.SSH(c) })...)
 	}
 	if b.has("https") {
 		c := cfg
-		c.Addr = httpsAddr
+		c.Addr = e.httpsAddr
 		results = append(results, pktWrap(func() []stats.Result { return bench.HTTPS(c) })...)
 	}
 	if b.has("proxy") {
 		results = append(results, pktWrap(func() []stats.Result {
-			return bench.Proxy(bench.ProxyConfig{Config: cfg, FreshAddr: proxyAddr, PooledAddr: proxyPooledAddr})
+			return bench.Proxy(bench.ProxyConfig{Config: cfg, FreshAddr: e.proxyAddr, PooledAddr: e.proxyPooledAddr})
 		})...)
 	}
 	if b.has("http3") {
 		c := cfg
-		c.Addr = http3Addr
+		c.Addr = e.http3Addr
 		results = append(results, pktWrap(func() []stats.Result { return bench.HTTP3(c) })...)
 	}
 	if b.has("tunnel-https") {
 		results = append(results, pktWrap(func() []stats.Result {
-			return bench.Tunnel(bench.TunnelConfig{Config: cfg, HTTPSHeadendAddr: headendHTTPSAddr})
+			return bench.Tunnel(bench.TunnelConfig{Config: cfg, HTTPSHeadendAddr: e.headendHTTPSAddr})
 		})...)
 	}
 	if b.has("tunnel-http3") {
 		results = append(results, pktWrap(func() []stats.Result {
-			return bench.Tunnel(bench.TunnelConfig{Config: cfg, H3HeadendAddr: headendH3Addr})
+			return bench.Tunnel(bench.TunnelConfig{Config: cfg, H3HeadendAddr: e.headendH3Addr})
 		})...)
 	}
 
+	return results
+}
+
+// Run executes the benchmark.
+func (b *BenchCmd) Run() error {
+	e, err := b.buildEnv()
+	if err != nil {
+		return err
+	}
+
+	if err := b.setupLatency(e); err != nil {
+		return err
+	}
+	if !b.Userspace && e.delay > 0 {
+		defer netem.Teardown()
+	}
+
+	dev, err := device.New(hostname, b.User, b.Pass, b.Transcripts)
+	if err != nil {
+		return fmt.Errorf("device: %w", err)
+	}
+
+	if err := b.startServers(e, dev); err != nil {
+		return err
+	}
+
+	pc, cleanup := b.setupPktCounter(e)
+	defer cleanup()
+
+	results := b.runBenchmarks(e, pc)
 	return outputResults(results, b.Output)
 }
 
