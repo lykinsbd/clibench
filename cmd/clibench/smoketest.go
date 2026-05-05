@@ -19,12 +19,13 @@ import (
 
 // SmoketestCmd runs a quick integration smoke test.
 type SmoketestCmd struct {
+	Hostname    string `help:"Device hostname." default:"bench-rtr"`
 	Transcripts string `help:"Transcript directory." default:"transcripts"`
 }
 
 // Run executes the smoke test.
 func (s *SmoketestCmd) Run() error {
-	dev, err := device.New("test-rtr", "admin", "admin", s.Transcripts)
+	dev, err := device.New(s.Hostname, "admin", "admin", s.Transcripts)
 	if err != nil {
 		return fmt.Errorf("device: %w", err)
 	}
@@ -60,7 +61,19 @@ func (s *SmoketestCmd) Run() error {
 	h3Srv.SetPacketConn(h3Conn)
 	go h3Srv.ListenAndServe()
 
-	time.Sleep(500 * time.Millisecond)
+	// Wait for servers
+	for _, addr := range []string{sshLn.Addr().String(), httpsLn.Addr().String()} {
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			c, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+			if err == nil {
+				c.Close()
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	time.Sleep(100 * time.Millisecond) // UDP/QUIC has no dial check
 
 	// Test HTTPS
 	fmt.Println("\n=== HTTPS Test ===")

@@ -29,7 +29,8 @@ func setupHTTP3Server(t *testing.T) string {
 	srv := http3server.New(conn.LocalAddr().String(), dev)
 	srv.SetPacketConn(conn)
 	go srv.ListenAndServe()
-	time.Sleep(200 * time.Millisecond)
+	t.Cleanup(func() { srv.Close() })
+	time.Sleep(100 * time.Millisecond) // UDP: no dial-based readiness check
 	return conn.LocalAddr().String()
 }
 

@@ -128,9 +128,9 @@ func HTTP3(c Config) []stats.Result {
 	batchTr.Close()
 
 	results := []stats.Result{
-		stats.Summarize("http3", "fresh-conn", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, freshTimes, freshC.iter()),
-		stats.Summarize("http3", "keep-alive", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, keepTimes, keepC.iter()),
-		stats.Summarize("http3", "batch-post", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, batchTimes, batchC.iter()),
+		c.summarize("http3", "fresh-conn", freshTimes, freshC),
+		c.summarize("http3", "keep-alive", keepTimes, keepC),
+		c.summarize("http3", "batch-post", batchTimes, batchC),
 	}
 
 	// Mode 4: 0-RTT resumption
@@ -172,7 +172,7 @@ func HTTP3(c Config) []stats.Result {
 		tr.Close()
 		return time.Since(start)
 	})
-	results = append(results, stats.Summarize("http3", "0rtt-resumption", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, zeroTimes, zeroC.iter()))
+	results = append(results, c.summarize("http3", "0rtt-resumption", zeroTimes, zeroC))
 
 	return results
 }

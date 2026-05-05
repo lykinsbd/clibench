@@ -3,7 +3,6 @@ package bench
 import (
 	"net"
 	"testing"
-	"time"
 
 	"github.com/lykinsbd/clibench/internal/headend"
 	"github.com/lykinsbd/clibench/internal/proxy"
@@ -21,6 +20,7 @@ func setupTunnel(t *testing.T) (httpsHeadendAddr, h3HeadendAddr string) {
 	p := proxy.New(siteLn.Addr().String(), sshAddr, "admin", "admin", true)
 	p.SetListener(siteLn)
 	go p.ListenAndServeTLS()
+	t.Cleanup(func() { p.Close() })
 
 	// Headend proxy (HTTPS WAN)
 	hHTTPSLn, err := net.Listen("tcp", "127.0.0.1:0")
@@ -33,6 +33,7 @@ func setupTunnel(t *testing.T) (httpsHeadendAddr, h3HeadendAddr string) {
 	}
 	hHTTPS.SetListener(hHTTPSLn)
 	go hHTTPS.ListenAndServe()
+	t.Cleanup(func() { hHTTPS.Close() })
 
 	// Headend proxy (HTTP/3 WAN) — still talks HTTPS to site proxy for now
 	hH3Ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -45,8 +46,11 @@ func setupTunnel(t *testing.T) (httpsHeadendAddr, h3HeadendAddr string) {
 	}
 	hH3.SetListener(hH3Ln)
 	go hH3.ListenAndServe()
+	t.Cleanup(func() { hH3.Close() })
 
-	time.Sleep(300 * time.Millisecond)
+	waitTCP(t, siteLn.Addr().String())
+	waitTCP(t, hHTTPSLn.Addr().String())
+	waitTCP(t, hH3Ln.Addr().String())
 	return hHTTPSLn.Addr().String(), hH3Ln.Addr().String()
 }
 

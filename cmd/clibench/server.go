@@ -18,7 +18,7 @@ type ServerCmd struct {
 	SSHPort     int    `help:"SSH listen port." default:"2222"`
 	HTTPSPort   int    `help:"HTTPS listen port." default:"8443"`
 	HTTP3Port   int    `help:"HTTP/3 listen port." default:"8444"`
-	Hostname    string `help:"Device hostname." default:"benchmark-rtr"`
+	Hostname    string `help:"Device hostname." default:"bench-rtr"`
 	User        string `help:"Username." default:"admin" short:"u"`
 	Pass        string `help:"Password." default:"admin" short:"p"`
 	Transcripts string `help:"Transcript directory." default:"transcripts"`

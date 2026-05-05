@@ -42,10 +42,9 @@ type BenchCmd struct {
 
 	User        string `help:"Username." default:"admin" short:"u"`
 	Pass        string `help:"Password." default:"admin" short:"p"`
+	Hostname    string `help:"Device hostname." default:"bench-rtr"`
 	Transcripts string `help:"Transcript directory." default:"transcripts"`
 }
-
-const hostname = "bench-rtr"
 
 func (b *BenchCmd) has(t string) bool {
 	for _, v := range b.Transport {
@@ -212,7 +211,12 @@ func (b *BenchCmd) startServers(e *benchEnv, dev *device.Device) error {
 		return err
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	// Wait for TCP servers to be ready
+	for _, addr := range []string{e.sshAddr, e.httpsAddr, e.backendSSHAddr, e.proxyAddr, e.headendHTTPSAddr} {
+		if err := waitReady(addr, 5*time.Second); err != nil {
+			return err
+		}
+	}
 	log.Printf("Servers ready — profile=%s, simulated RTT=%.0fms", b.Latency, e.rttMs)
 	return nil
 }
@@ -259,7 +263,7 @@ func (b *BenchCmd) runBenchmarks(e *benchEnv, pc *pktcount.Counter) []stats.Resu
 		Commands:    b.Commands,
 		Profile:     b.Latency,
 		RTTms:       e.rttMs,
-		Hostname:    hostname,
+		Hostname:    b.Hostname,
 	}
 
 	pktWrap := func(fn func() []stats.Result) []stats.Result {
@@ -326,7 +330,7 @@ func (b *BenchCmd) Run() error {
 		defer netem.Teardown()
 	}
 
-	dev, err := device.New(hostname, b.User, b.Pass, b.Transcripts)
+	dev, err := device.New(b.Hostname, b.User, b.Pass, b.Transcripts)
 	if err != nil {
 		return fmt.Errorf("device: %w", err)
 	}
@@ -340,6 +344,20 @@ func (b *BenchCmd) Run() error {
 
 	results := b.runBenchmarks(e, pc)
 	return outputResults(results, b.Output)
+}
+
+// waitReady polls a TCP address until it accepts connections or timeout.
+func waitReady(addr string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		c, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+		if err == nil {
+			c.Close()
+			return nil
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return fmt.Errorf("server %s not ready after %v", addr, timeout)
 }
 
 func outputResults(results []stats.Result, format string) error {
