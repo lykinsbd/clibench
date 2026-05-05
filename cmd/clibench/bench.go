@@ -233,7 +233,7 @@ func (b *BenchCmd) startServers(e *benchEnv, dev *device.Device) error {
 }
 
 func (b *BenchCmd) setupPktCounter(e *benchEnv) (*pktcount.Counter, func()) {
-	if b.Userspace || e.delay == 0 {
+	if b.Userspace {
 		return nil, func() {}
 	}
 
