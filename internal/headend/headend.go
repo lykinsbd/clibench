@@ -71,7 +71,11 @@ func (s *Server) Addr() string {
 }
 
 // Close stops the server.
+// Close stops the server and releases the HTTP client.
 func (s *Server) Close() error {
+	if s.client != nil {
+		s.client.CloseIdleConnections()
+	}
 	if s.listener != nil {
 		return s.listener.Close()
 	}
