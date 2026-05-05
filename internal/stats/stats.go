@@ -134,7 +134,11 @@ func medianInts(s []int) int {
 	c := make([]int, len(s))
 	copy(c, s)
 	sort.Ints(c)
-	return c[len(c)/2]
+	n := len(c)
+	if n%2 == 1 {
+		return c[n/2]
+	}
+	return (c[n/2-1] + c[n/2]) / 2
 }
 
 // Percentile returns the p-th percentile from a sorted slice.

@@ -56,6 +56,17 @@ func (b *BenchCmd) has(t string) bool {
 }
 
 // benchEnv holds all addresses computed from BenchCmd ports.
+// Port layout (from base ports):
+//   SSHPort          — main SSH server (WAN delay)
+//   SSHPort+1000     — backend SSH for proxy/tunnel (campus delay)
+//   HTTPSPort        — main HTTPS server (WAN delay)
+//   HTTP3Port        — main HTTP/3 server (WAN delay)
+//   ProxyPort        — proxy fresh-SSH mode (WAN delay)
+//   ProxyPort+1      — proxy pooled-SSH mode (WAN delay)
+//   ProxyPort+2      — tunnel site HTTPS proxy (WAN delay)
+//   ProxyPort+3      — tunnel site HTTP/3 proxy (WAN delay)
+//   HeadendHTTPSPort — tunnel headend SSH (campus delay)
+//   HeadendH3Port    — tunnel headend SSH/H3 (campus delay)
 type benchEnv struct {
 	sshAddr             string
 	httpsAddr           string

@@ -11,7 +11,7 @@ import (
 
 func writeTable(w io.Writer, results []stats.Result) error {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "TRANSPORT\tOPERATION\tCMDS\tITER\tERR\tRT\tRD_OPS\tWR_OPS\tPKT_IN\tPKT_OUT\tAVG(ms)\tMIN(ms)\tP50(ms)\tP95(ms)\tMAX(ms)\tSTDDEV")
+	fmt.Fprintln(tw, "TRANSPORT\tOPERATION\tCMDS\tITER\tERR\tRT\tRD_OPS\tWR_OPS\tPKT_IN\tPKT_OUT\tAVG(ms)\tMIN(ms)\tP50(ms)\tP95(ms)\tMAX(ms)\tSTDDEV(ms)")
 	for _, r := range results {
 		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\n",
 			r.Transport, r.Operation, r.Commands, r.Iterations, r.Errors,
@@ -23,11 +23,12 @@ func writeTable(w io.Writer, results []stats.Result) error {
 
 func writeCSV(w io.Writer, results []stats.Result) error {
 	cw := csv.NewWriter(w)
+	// Column order matches table: avg, min, p50, p95, max, stddev
 	_ = cw.Write([]string{
 		"transport", "operation", "commands", "iterations", "errors",
 		"concurrency", "latency_profile", "simulated_rtt_ms",
 		"round_trips", "read_ops", "write_ops", "packets_in", "packets_out",
-		"avg_ms", "min_ms", "max_ms", "p50_ms", "p95_ms", "stddev_ms",
+		"avg_ms", "min_ms", "p50_ms", "p95_ms", "max_ms", "stddev_ms",
 	})
 	for _, r := range results {
 		_ = cw.Write([]string{
@@ -39,8 +40,8 @@ func writeCSV(w io.Writer, results []stats.Result) error {
 			fmt.Sprintf("%d", r.ReadOps), fmt.Sprintf("%d", r.WriteOps),
 			fmt.Sprintf("%d", r.PacketsIn), fmt.Sprintf("%d", r.PacketsOut),
 			fmt.Sprintf("%.3f", r.AvgMs), fmt.Sprintf("%.3f", r.MinMs),
-			fmt.Sprintf("%.3f", r.MaxMs), fmt.Sprintf("%.3f", r.P50Ms),
-			fmt.Sprintf("%.3f", r.P95Ms), fmt.Sprintf("%.3f", r.StddevMs),
+			fmt.Sprintf("%.3f", r.P50Ms), fmt.Sprintf("%.3f", r.P95Ms),
+			fmt.Sprintf("%.3f", r.MaxMs), fmt.Sprintf("%.3f", r.StddevMs),
 		})
 	}
 	cw.Flush()
