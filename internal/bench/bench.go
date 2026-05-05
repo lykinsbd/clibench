@@ -29,22 +29,36 @@ var LatencyProfiles = map[string]time.Duration{
 	"transpacific":     87 * time.Millisecond,
 }
 
-// Config holds parameters for a benchmark run.
-type Config struct {
-	Addr        string // target server address (host:port)
-	User        string // authentication username
-	Pass        string // authentication password
-	Iterations  int    // number of iterations per benchmark mode
-	Concurrency int    // concurrent workers
-	Commands    int    // commands per iteration
-	Profile     string // latency profile name for result labeling
-	RTTms       float64 // simulated round-trip time in milliseconds
-	Hostname    string // device hostname for PTY prompt detection
+// PktCounter is the interface for packet counting (satisfied by *pktcount.Counter).
+type PktCounter interface {
+	Reset()
+	Snapshot() (in, out int)
 }
 
-// summarize is a convenience wrapper around stats.Summarize using Config fields.
+// Config holds parameters for a benchmark run.
+type Config struct {
+	Addr        string     // target server address (host:port)
+	User        string     // authentication username
+	Pass        string     // authentication password
+	Iterations  int        // number of iterations per benchmark mode
+	Concurrency int        // concurrent workers
+	Commands    int        // commands per iteration
+	Profile     string     // latency profile name for result labeling
+	RTTms       float64    // simulated round-trip time in milliseconds
+	Hostname    string     // device hostname for PTY prompt detection
+	PktCounter  PktCounter // optional packet counter (nil when unavailable)
+}
+
+// pktReset resets the packet counter (no-op if nil).
+func (c Config) pktReset() {
+	if c.PktCounter != nil {
+		c.PktCounter.Reset()
+	}
+}
+
+// summarize computes stats and snapshots packet counts accumulated since last pktReset.
 func (c Config) summarize(transport, op string, times []time.Duration, counts counters) stats.Result {
-	return stats.Summarize(stats.SummarizeConfig{
+	r := stats.Summarize(stats.SummarizeConfig{
 		Transport:   transport,
 		Operation:   op,
 		Commands:    c.Commands,
@@ -55,6 +69,10 @@ func (c Config) summarize(transport, op string, times []time.Duration, counts co
 		Times:       times,
 		Counts:      counts.iter(),
 	})
+	if c.PktCounter != nil {
+		r.PacketsIn, r.PacketsOut = c.PktCounter.Snapshot()
+	}
+	return r
 }
 
 func sshConfig(user, pass string) *ssh.ClientConfig {
@@ -152,6 +170,7 @@ func SSH(c Config) []stats.Result {
 	log.Printf("Benchmarking SSH (%d iterations, %d concurrency, %d cmds/iter)", c.Iterations, c.Concurrency, c.Commands)
 	cfg := sshConfig(c.User, c.Pass)
 
+	c.pktReset()
 	// Mode 1: fresh connection per iteration
 	freshTimes, freshC := sshFreshBench(c, c.Addr, cfg, func(conn *ssh.Client) error {
 		for i := 0; i < c.Commands; i++ {
@@ -168,6 +187,7 @@ func SSH(c Config) []stats.Result {
 		return nil
 	})
 
+	c.pktReset()
 	// Mode 2: reuse one connection (ControlMaster-style)
 	sharedConn, sharedCC, err := sshDialCounted(c.Addr, cfg)
 	var reuseTimes []time.Duration
@@ -208,6 +228,7 @@ func SSH(c Config) []stats.Result {
 		sharedConn.Close()
 	}
 
+	c.pktReset()
 	// Mode 3: batch exec
 	batchPayload := stats.GenerateExecPayload(c.Commands)
 	batchTimes, batchC := sshFreshBench(c, c.Addr, cfg, func(conn *ssh.Client) error {
@@ -228,6 +249,7 @@ func SSH(c Config) []stats.Result {
 	}
 	results = append(results, c.summarize("ssh", "batch-exec", batchTimes, batchC))
 
+	c.pktReset()
 	// Mode 4: PTY/shell — fresh connection per iteration
 	prompt := c.Hostname + "#"
 	ptyFreshTimes, ptyFreshC := sshFreshBench(c, c.Addr, cfg, func(conn *ssh.Client) error {
@@ -240,6 +262,7 @@ func SSH(c Config) []stats.Result {
 	})
 	results = append(results, c.summarize("ssh", "pty-fresh", ptyFreshTimes, ptyFreshC))
 
+	c.pktReset()
 	// Mode 5: PTY/shell — reuse connection
 	ptyConn, ptyCC, err := sshDialCounted(c.Addr, cfg)
 	if err == nil {
@@ -309,6 +332,7 @@ func HTTPS(c Config) []stats.Result {
 		return ct
 	}
 
+	c.pktReset()
 	// Mode 1: fresh connection per iteration
 	freshC := newCounters(c.Iterations)
 	freshTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
@@ -343,6 +367,7 @@ func HTTPS(c Config) []stats.Result {
 		return time.Since(start)
 	})
 
+	c.pktReset()
 	// Mode 2: keep-alive — shared connection, count per iteration
 	keepTr := countingTransport()
 	keepClient := &http.Client{Transport: keepTr.Transport, Timeout: 30 * time.Second}
@@ -367,6 +392,7 @@ func HTTPS(c Config) []stats.Result {
 		return time.Since(start)
 	})
 
+	c.pktReset()
 	// Mode 3: batch POST
 	batchPayload := stats.GenerateExecPayload(c.Commands)
 	batchTr := countingTransport()
@@ -409,6 +435,7 @@ func HTTPS(c Config) []stats.Result {
 		c.summarize("https", "batch-post", batchTimes, batchC),
 	}
 
+	c.pktReset()
 	// Mode 4: multi-command GET (ASA slash syntax)
 	if c.Commands > 1 {
 		cmdParts := make([]string, c.Commands)
@@ -514,12 +541,16 @@ func Proxy(c ProxyConfig) []stats.Result {
 		return time.Since(start), trips, reads, writes
 	}
 
+	c.pktReset()
 	freshC := newCounters(c.Iterations)
 	freshTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
 		d, t, r, w := doProxy(c.FreshAddr)
 		freshC.trips[idx], freshC.reads[idx], freshC.writes[idx] = t, r, w
 		return d
 	})
+	freshResult := c.summarize("proxy", "fresh-ssh", freshTimes, freshC)
+
+	c.pktReset()
 	pooledC := newCounters(c.Iterations)
 	pooledTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
 		d, t, r, w := doProxy(c.PooledAddr)
@@ -528,7 +559,7 @@ func Proxy(c ProxyConfig) []stats.Result {
 	})
 
 	return []stats.Result{
-		c.summarize("proxy", "fresh-ssh", freshTimes, freshC),
+		freshResult,
 		c.summarize("proxy", "pooled-ssh", pooledTimes, pooledC),
 	}
 }

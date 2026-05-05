@@ -42,6 +42,7 @@ func HTTP3(c Config) []stats.Result {
 
 	tlsCfg := &tls.Config{InsecureSkipVerify: true, NextProtos: []string{http3.NextProtoH3}}
 
+	c.pktReset()
 	// Mode 1: fresh connection per iteration
 	freshC := newCounters(c.Iterations)
 	freshTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
@@ -63,6 +64,7 @@ func HTTP3(c Config) []stats.Result {
 		return time.Since(start)
 	})
 
+	c.pktReset()
 	// Mode 2: keep-alive (shared QUIC connection)
 	var keepCC *rtcount.PacketConn
 	keepTr := &http3.Transport{TLSClientConfig: tlsCfg.Clone(), Dial: h3Dial(&keepCC)}
@@ -89,6 +91,7 @@ func HTTP3(c Config) []stats.Result {
 	})
 	keepTr.Close()
 
+	c.pktReset()
 	// Mode 3: batch POST over shared connection
 	batchPayload := stats.GenerateExecPayload(c.Commands)
 	var batchCC *rtcount.PacketConn
@@ -133,6 +136,7 @@ func HTTP3(c Config) []stats.Result {
 		c.summarize("http3", "batch-post", batchTimes, batchC),
 	}
 
+	c.pktReset()
 	// Mode 4: 0-RTT resumption
 	sessionCache := tls.NewLRUClientSessionCache(1)
 	zeroRTTCfg := &tls.Config{
