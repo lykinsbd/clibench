@@ -91,9 +91,11 @@ defaults, short flags, and help text are all struct tags.
 ## Adding a Benchmark Mode
 
 1. Add mode logic in the appropriate function in `internal/bench/`.
-2. Use `stats.RunParallel` for iteration execution and `stats.Summarize` for results.
-3. Add a test in the corresponding `_test.go` file.
-4. Update the README benchmark modes table.
+2. Use `stats.RunParallel` for iteration execution and `Config.summarize()` for results.
+3. For HTTP-based servers, implement `httphandler.Runner` and use `httphandler.Mux()`.
+4. For SSH-based servers, use `sshutil.ServerConfig()` and `sshutil.Serve()`.
+5. Add a test in the corresponding `_test.go` file.
+6. Update the README benchmark modes table.
 
 ## Adding a Command Transcript
 
