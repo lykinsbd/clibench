@@ -2,7 +2,6 @@ package bench
 
 import (
 	"log"
-	"time"
 
 	"github.com/lykinsbd/clibench/internal/stats"
 	"golang.org/x/crypto/ssh"
@@ -21,72 +20,45 @@ func Tunnel(c TunnelConfig) []stats.Result {
 	cfg := sshConfig(c.User, c.Pass)
 
 	var results []stats.Result
-
 	if c.HTTPSHeadendAddr != "" {
-		results = append(results, tunnelFresh(cfg, c, c.HTTPSHeadendAddr, "tunnel", "ssh-https-ssh")...)
+		results = append(results, tunnelModes(c, cfg, c.HTTPSHeadendAddr, "ssh-https-ssh")...)
 	}
 	if c.H3HeadendAddr != "" {
-		results = append(results, tunnelFresh(cfg, c, c.H3HeadendAddr, "tunnel", "ssh-http3-ssh")...)
+		results = append(results, tunnelModes(c, cfg, c.H3HeadendAddr, "ssh-http3-ssh")...)
 	}
-
 	return results
 }
 
-func tunnelFresh(cfg *ssh.ClientConfig, c TunnelConfig, edgeAddr, transport, op string) []stats.Result {
+func tunnelModes(c TunnelConfig, cfg *ssh.ClientConfig, addr, op string) []stats.Result {
 	batchPayload := stats.GenerateExecPayload(c.Commands)
 
-	freshC := newCounters(c.Iterations)
-	freshTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
-		start := time.Now()
-		conn, cc, err := sshDialCounted(edgeAddr, cfg)
-		if err != nil {
-			log.Printf("%s fresh: %v", op, err)
-			return errDuration
-		}
-		defer conn.Close()
+	freshTimes, freshC := sshFreshBench(c.Config, addr, cfg, func(conn *ssh.Client) error {
 		for i := 0; i < c.Commands; i++ {
 			sess, err := conn.NewSession()
 			if err != nil {
-				log.Printf("%s session: %v", op, err)
-				return errDuration
+				return err
 			}
 			_, err = sess.Output("show version")
 			sess.Close()
 			if err != nil {
-				log.Printf("%s exec: %v", op, err)
-				return errDuration
+				return err
 			}
 		}
-		freshC.recordConn(idx, cc)
-		return time.Since(start)
+		return nil
 	})
 
-	batchC := newCounters(c.Iterations)
-	batchTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
-		start := time.Now()
-		conn, cc, err := sshDialCounted(edgeAddr, cfg)
-		if err != nil {
-			log.Printf("%s-batch: %v", op, err)
-			return errDuration
-		}
-		defer conn.Close()
+	batchTimes, batchC := sshFreshBench(c.Config, addr, cfg, func(conn *ssh.Client) error {
 		sess, err := conn.NewSession()
 		if err != nil {
-			log.Printf("%s-batch session: %v", op, err)
-			return errDuration
+			return err
 		}
 		_, err = sess.Output(batchPayload)
 		sess.Close()
-		if err != nil {
-			log.Printf("%s-batch exec: %v", op, err)
-			return errDuration
-		}
-		batchC.recordConn(idx, cc)
-		return time.Since(start)
+		return err
 	})
 
 	return []stats.Result{
-		stats.Summarize(transport, op, c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, freshTimes, freshC.iter()),
-		stats.Summarize(transport, op+"-batch", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, batchTimes, batchC.iter()),
+		stats.Summarize("tunnel", op, c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, freshTimes, freshC.iter()),
+		stats.Summarize("tunnel", op+"-batch", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, batchTimes, batchC.iter()),
 	}
 }

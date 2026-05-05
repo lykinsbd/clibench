@@ -3,16 +3,12 @@
 package sshserver
 
 import (
-	"crypto/ed25519"
-	"crypto/rand"
-	"errors"
-	"fmt"
 	"io"
-	"log"
 	"net"
 	"strings"
 
 	"github.com/lykinsbd/clibench/internal/device"
+	"github.com/lykinsbd/clibench/internal/sshutil"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -26,32 +22,15 @@ type Server struct {
 
 // New creates an SSH server on addr backed by dev.
 func New(addr string, dev *device.Device) (*Server, error) {
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	cfg, err := sshutil.ServerConfig(dev.Username, dev.Password)
 	if err != nil {
 		return nil, err
 	}
-	signer, err := ssh.NewSignerFromKey(priv)
-	if err != nil {
-		return nil, err
-	}
-
-	cfg := &ssh.ServerConfig{
-		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
-			if c.User() == dev.Username && string(pass) == dev.Password {
-				return nil, nil
-			}
-			return nil, fmt.Errorf("auth failed")
-		},
-	}
-	cfg.AddHostKey(signer)
-
 	return &Server{dev: dev, cfg: cfg, addr: addr}, nil
 }
 
 // SetListener sets a custom net.Listener (e.g., one wrapped with latency injection).
-func (s *Server) SetListener(ln net.Listener) {
-	s.listener = ln
-}
+func (s *Server) SetListener(ln net.Listener) { s.listener = ln }
 
 // Addr returns the listener's address, or "" if not yet listening.
 func (s *Server) Addr() string {
@@ -70,48 +49,13 @@ func (s *Server) Close() error {
 }
 
 // ListenAndServe starts accepting SSH connections.
-// It returns nil when the listener is closed via Close().
 func (s *Server) ListenAndServe() error {
-	if s.listener == nil {
-		ln, err := net.Listen("tcp", s.addr)
-		if err != nil {
-			return err
-		}
-		s.listener = ln
-	}
-	log.Printf("SSH listening on %s", s.listener.Addr())
-	for {
-		conn, err := s.listener.Accept()
-		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				return nil
-			}
-			return err
-		}
-		go s.handleConn(conn)
-	}
-}
-
-func (s *Server) handleConn(c net.Conn) {
-	defer c.Close()
-	sConn, chans, reqs, err := ssh.NewServerConn(c, s.cfg)
+	var err error
+	s.listener, err = sshutil.Listen(s.listener, s.addr, "SSH")
 	if err != nil {
-		return
+		return err
 	}
-	defer sConn.Close()
-	go ssh.DiscardRequests(reqs)
-
-	for newCh := range chans {
-		if newCh.ChannelType() != "session" {
-			newCh.Reject(ssh.UnknownChannelType, "unsupported")
-			continue
-		}
-		ch, requests, err := newCh.Accept()
-		if err != nil {
-			continue
-		}
-		go s.handleSession(ch, requests)
-	}
+	return sshutil.Serve(s.listener, s.cfg, s.handleSession)
 }
 
 func (s *Server) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request) {
@@ -132,7 +76,6 @@ func (s *Server) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request) {
 			}
 			req.Reply(true, nil)
 			if execCmd != "" {
-				// Split newline-delimited payloads (batch exec mode)
 				var out strings.Builder
 				for _, line := range strings.Split(execCmd, "\n") {
 					cmd := strings.TrimSpace(line)
