@@ -276,19 +276,8 @@ func (b *BenchCmd) runBenchmarks(e *benchEnv, pc *pktcount.Counter) []stats.Resu
 		RTTms:       e.rttMs,
 		Hostname:    b.Hostname,
 	}
-
-	pktWrap := func(fn func() []stats.Result) []stats.Result {
-		if pc == nil {
-			return fn()
-		}
-		pc.Reset()
-		rs := fn()
-		totalIn, totalOut := pc.Snapshot()
-		if len(rs) > 0 {
-			rs[0].PacketsIn = totalIn
-			rs[0].PacketsOut = totalOut
-		}
-		return rs
+	if pc != nil {
+		cfg.PktCounter = pc
 	}
 
 	var results []stats.Result
@@ -296,32 +285,26 @@ func (b *BenchCmd) runBenchmarks(e *benchEnv, pc *pktcount.Counter) []stats.Resu
 	if b.has("ssh") {
 		c := cfg
 		c.Addr = e.sshAddr
-		results = append(results, pktWrap(func() []stats.Result { return bench.SSH(c) })...)
+		results = append(results, bench.SSH(c)...)
 	}
 	if b.has("https") {
 		c := cfg
 		c.Addr = e.httpsAddr
-		results = append(results, pktWrap(func() []stats.Result { return bench.HTTPS(c) })...)
+		results = append(results, bench.HTTPS(c)...)
 	}
 	if b.has("proxy") {
-		results = append(results, pktWrap(func() []stats.Result {
-			return bench.Proxy(bench.ProxyConfig{Config: cfg, FreshAddr: e.proxyAddr, PooledAddr: e.proxyPooledAddr})
-		})...)
+		results = append(results, bench.Proxy(bench.ProxyConfig{Config: cfg, FreshAddr: e.proxyAddr, PooledAddr: e.proxyPooledAddr})...)
 	}
 	if b.has("http3") {
 		c := cfg
 		c.Addr = e.http3Addr
-		results = append(results, pktWrap(func() []stats.Result { return bench.HTTP3(c) })...)
+		results = append(results, bench.HTTP3(c)...)
 	}
 	if b.has("tunnel-https") {
-		results = append(results, pktWrap(func() []stats.Result {
-			return bench.Tunnel(bench.TunnelConfig{Config: cfg, HTTPSHeadendAddr: e.headendHTTPSAddr})
-		})...)
+		results = append(results, bench.Tunnel(bench.TunnelConfig{Config: cfg, HTTPSHeadendAddr: e.headendHTTPSAddr})...)
 	}
 	if b.has("tunnel-http3") {
-		results = append(results, pktWrap(func() []stats.Result {
-			return bench.Tunnel(bench.TunnelConfig{Config: cfg, H3HeadendAddr: e.headendH3Addr})
-		})...)
+		results = append(results, bench.Tunnel(bench.TunnelConfig{Config: cfg, H3HeadendAddr: e.headendH3Addr})...)
 	}
 
 	return results

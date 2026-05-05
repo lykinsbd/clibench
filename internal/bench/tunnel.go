@@ -32,6 +32,7 @@ func Tunnel(c TunnelConfig) []stats.Result {
 func tunnelModes(c TunnelConfig, cfg *ssh.ClientConfig, addr, op string) []stats.Result {
 	batchPayload := stats.GenerateExecPayload(c.Commands)
 
+	c.pktReset()
 	freshTimes, freshC := sshFreshBench(c.Config, addr, cfg, func(conn *ssh.Client) error {
 		for i := 0; i < c.Commands; i++ {
 			sess, err := conn.NewSession()
@@ -47,6 +48,9 @@ func tunnelModes(c TunnelConfig, cfg *ssh.ClientConfig, addr, op string) []stats
 		return nil
 	})
 
+	freshResult := c.summarize("tunnel", op, freshTimes, freshC)
+
+	c.pktReset()
 	batchTimes, batchC := sshFreshBench(c.Config, addr, cfg, func(conn *ssh.Client) error {
 		sess, err := conn.NewSession()
 		if err != nil {
@@ -58,7 +62,7 @@ func tunnelModes(c TunnelConfig, cfg *ssh.ClientConfig, addr, op string) []stats
 	})
 
 	return []stats.Result{
-		c.summarize("tunnel", op, freshTimes, freshC),
+		freshResult,
 		c.summarize("tunnel", op+"-batch", batchTimes, batchC),
 	}
 }
