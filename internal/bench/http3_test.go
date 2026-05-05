@@ -2,26 +2,16 @@ package bench
 
 import (
 	"net"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/lykinsbd/clibench/internal/device"
 	"github.com/lykinsbd/clibench/internal/http3server"
+	"github.com/lykinsbd/clibench/internal/testutil"
 )
 
 func setupHTTP3Server(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "show_version.txt"), []byte("TestOS v1\n"), 0644)
-	os.WriteFile(filepath.Join(dir, "show_ip_interface_brief.txt"), []byte("Gi0/0 10.0.0.1\n"), 0644)
-	os.WriteFile(filepath.Join(dir, "terminal_length_0.txt"), []byte(""), 0644)
-	os.WriteFile(filepath.Join(dir, "terminal_width_511.txt"), []byte(""), 0644)
-	dev, err := device.New("test-rtr", "admin", "admin", dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	dev := testutil.NewDevice(t)
 	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
