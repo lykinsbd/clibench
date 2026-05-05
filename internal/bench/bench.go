@@ -111,36 +111,46 @@ func (c counters) iter() stats.IterCounts {
 	return stats.IterCounts{Trips: c.trips, Reads: c.reads, Writes: c.writes}
 }
 
+// sshFreshBench runs a fresh-connection SSH benchmark where each iteration
+// dials, executes commands, and closes. Used by SSH fresh-conn, batch-exec,
+// and tunnel modes.
+func sshFreshBench(c Config, addr string, cfg *ssh.ClientConfig, execFn func(*ssh.Client) error) ([]time.Duration, counters) {
+	cnt := newCounters(c.Iterations)
+	times := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
+		start := time.Now()
+		conn, cc, err := sshDialCounted(addr, cfg)
+		if err != nil {
+			return errDuration
+		}
+		defer conn.Close()
+		if err := execFn(conn); err != nil {
+			return errDuration
+		}
+		cnt.recordConn(idx, cc)
+		return time.Since(start)
+	})
+	return times, cnt
+}
+
 // SSH runs all SSH benchmark modes and returns the results.
 func SSH(c Config) []stats.Result {
 	log.Printf("Benchmarking SSH (%d iterations, %d concurrency, %d cmds/iter)", c.Iterations, c.Concurrency, c.Commands)
 	cfg := sshConfig(c.User, c.Pass)
 
 	// Mode 1: fresh connection per iteration
-	freshC := newCounters(c.Iterations)
-	freshTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
-		start := time.Now()
-		conn, cc, err := sshDialCounted(c.Addr, cfg)
-		if err != nil {
-			log.Printf("ssh dial: %v", err)
-			return errDuration
-		}
-		defer conn.Close()
+	freshTimes, freshC := sshFreshBench(c, c.Addr, cfg, func(conn *ssh.Client) error {
 		for i := 0; i < c.Commands; i++ {
 			sess, err := conn.NewSession()
 			if err != nil {
-				log.Printf("ssh session: %v", err)
-				return errDuration
+				return err
 			}
 			_, err = sess.Output("show version")
 			sess.Close()
 			if err != nil {
-				log.Printf("ssh exec: %v", err)
-				return errDuration
+				return err
 			}
 		}
-		freshC.recordConn(idx, cc)
-		return time.Since(start)
+		return nil
 	})
 
 	// Mode 2: reuse one connection (ControlMaster-style)
@@ -185,28 +195,14 @@ func SSH(c Config) []stats.Result {
 
 	// Mode 3: batch exec
 	batchPayload := stats.GenerateExecPayload(c.Commands)
-	batchC := newCounters(c.Iterations)
-	batchTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
-		start := time.Now()
-		conn, cc, err := sshDialCounted(c.Addr, cfg)
-		if err != nil {
-			log.Printf("ssh batch dial: %v", err)
-			return errDuration
-		}
-		defer conn.Close()
+	batchTimes, batchC := sshFreshBench(c, c.Addr, cfg, func(conn *ssh.Client) error {
 		sess, err := conn.NewSession()
 		if err != nil {
-			log.Printf("ssh batch session: %v", err)
-			return errDuration
+			return err
 		}
 		_, err = sess.Output(batchPayload)
 		sess.Close()
-		if err != nil {
-			log.Printf("ssh batch exec: %v", err)
-			return errDuration
-		}
-		batchC.recordConn(idx, cc)
-		return time.Since(start)
+		return err
 	})
 
 	results := []stats.Result{
@@ -219,26 +215,13 @@ func SSH(c Config) []stats.Result {
 
 	// Mode 4: PTY/shell — fresh connection per iteration
 	prompt := c.Hostname + "#"
-	ptyFreshC := newCounters(c.Iterations)
-	ptyFreshTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
-		start := time.Now()
-		conn, cc, err := sshDialCounted(c.Addr, cfg)
-		if err != nil {
-			log.Printf("ssh pty dial: %v", err)
-			return errDuration
-		}
-		defer conn.Close()
+	ptyFreshTimes, ptyFreshC := sshFreshBench(c, c.Addr, cfg, func(conn *ssh.Client) error {
 		sess, err := conn.NewSession()
 		if err != nil {
-			return errDuration
+			return err
 		}
 		defer sess.Close()
-		if err := ptyExecCmds(sess, prompt, c.Commands); err != nil {
-			log.Printf("ssh pty-fresh: %v", err)
-			return errDuration
-		}
-		ptyFreshC.recordConn(idx, cc)
-		return time.Since(start)
+		return ptyExecCmds(sess, prompt, c.Commands)
 	})
 	results = append(results, stats.Summarize("ssh", "pty-fresh", c.Commands, c.Iterations, c.Concurrency, c.Profile, c.RTTms, ptyFreshTimes, ptyFreshC.iter()))
 

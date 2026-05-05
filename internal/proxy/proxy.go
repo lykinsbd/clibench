@@ -1,5 +1,5 @@
-// Package proxy provides an HTTPS server that forwards CLI commands
-// to a backend network device over SSH. This is the "edge proxy" pattern:
+// Package proxy provides an HTTPS/HTTP3 server that forwards CLI commands
+// to a backend network device over SSH. This is the "site proxy" pattern:
 // automation talks HTTPS over the WAN, the proxy talks SSH over a
 // low-latency campus link.
 package proxy
@@ -8,7 +8,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -16,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lykinsbd/clibench/internal/httphandler"
 	"github.com/lykinsbd/clibench/internal/tlsutil"
 	"golang.org/x/crypto/ssh"
 
@@ -90,72 +90,8 @@ func (s *Server) Close() error {
 	return firstErr
 }
 
-// ListenAndServeTLS starts the HTTPS proxy.
-// It returns nil when the server is closed via Close().
-func (s *Server) ListenAndServeTLS() error {
-	tlsCfg, err := tlsutil.SelfSignedConfig()
-	if err != nil {
-		return err
-	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/admin/exec/", s.handleExec)
-	mux.HandleFunc("/admin/config", s.handleConfig)
-
-	if s.listener == nil {
-		s.listener, err = net.Listen("tcp", s.addr)
-		if err != nil {
-			return err
-		}
-	}
-	ln := tls.NewListener(s.listener, tlsCfg)
-	s.srv = &http.Server{Handler: s.authMiddleware(mux), TLSConfig: tlsCfg}
-	log.Printf("Proxy HTTPS listening on %s → SSH backend %s (pooled=%v)", s.listener.Addr(), s.backendAddr, s.pooled)
-	err = s.srv.Serve(ln)
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
-	}
-	return err
-}
-
-func (s *Server) authMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user, pass, ok := r.BasicAuth()
-		if !ok || user != s.user || pass != s.pass {
-			w.Header().Set("WWW-Authenticate", `Basic realm="proxy"`)
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func (s *Server) getSSH() (*ssh.Client, bool, error) {
-	if !s.pooled {
-		c, err := ssh.Dial("tcp", s.backendAddr, s.sshCfg)
-		return c, false, err
-	}
-	// Caller must hold s.mu when using the pooled connection.
-	if s.pool != nil {
-		return s.pool, true, nil
-	}
-	c, err := ssh.Dial("tcp", s.backendAddr, s.sshCfg)
-	if err != nil {
-		return nil, false, err
-	}
-	s.pool = c
-	return c, true, nil
-}
-
-// resetPool clears the pooled connection so the next call reconnects.
-// Caller must hold s.mu.
-func (s *Server) resetPool() {
-	if s.pool != nil {
-		s.pool.Close()
-		s.pool = nil
-	}
-}
-
-func (s *Server) execSSH(commands []string) (string, error) {
+// RunCommands implements httphandler.Runner by forwarding to SSH backend.
+func (s *Server) RunCommands(cmds []string) (string, error) {
 	if s.pooled {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -170,7 +106,7 @@ func (s *Server) execSSH(commands []string) (string, error) {
 	}
 
 	var out strings.Builder
-	for _, cmd := range commands {
+	for _, cmd := range cmds {
 		sess, err := conn.NewSession()
 		if err != nil {
 			if pooled {
@@ -191,52 +127,29 @@ func (s *Server) execSSH(commands []string) (string, error) {
 	return out.String(), nil
 }
 
-func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/admin/exec/")
-	if path == "" {
-		http.Error(w, "no command", http.StatusBadRequest)
-		return
-	}
-	var cmds []string
-	for _, p := range strings.Split(path, "/") {
-		cmd := strings.TrimSpace(strings.ReplaceAll(p, "+", " "))
-		if cmd != "" {
-			cmds = append(cmds, cmd)
-		}
-	}
-	out, err := s.execSSH(cmds)
+// ListenAndServeTLS starts the HTTPS proxy.
+func (s *Server) ListenAndServeTLS() error {
+	tlsCfg, err := tlsutil.SelfSignedConfig()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
+		return err
 	}
-	w.Header().Set("Content-Type", "text/plain")
-	io.WriteString(w, out)
-}
 
-func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
-		return
-	}
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	var cmds []string
-	for _, line := range strings.Split(string(body), "\n") {
-		cmd := strings.TrimSpace(line)
-		if cmd != "" {
-			cmds = append(cmds, cmd)
+	handler := httphandler.Mux(s.user, s.pass, s)
+
+	if s.listener == nil {
+		s.listener, err = net.Listen("tcp", s.addr)
+		if err != nil {
+			return err
 		}
 	}
-	out, err := s.execSSH(cmds)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
+	ln := tls.NewListener(s.listener, tlsCfg)
+	s.srv = &http.Server{Handler: handler, TLSConfig: tlsCfg}
+	log.Printf("Proxy HTTPS listening on %s → SSH backend %s (pooled=%v)", s.listener.Addr(), s.backendAddr, s.pooled)
+	err = s.srv.Serve(ln)
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
 	}
-	w.Header().Set("Content-Type", "text/plain")
-	io.WriteString(w, out)
+	return err
 }
 
 // SetPacketConn sets a custom net.PacketConn for HTTP/3 serving.
@@ -250,16 +163,12 @@ func (s *Server) ListenAndServeH3() error {
 	}
 	tlsCfg.NextProtos = []string{"h3"}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/admin/exec/", s.handleExec)
-	mux.HandleFunc("/admin/config", s.handleConfig)
-
-	h3srv := &http3.Server{
-		Handler:   s.authMiddleware(mux),
-		TLSConfig: tlsCfg,
+	handler := httphandler.Mux(s.user, s.pass, s)
+	s.h3srv = &http3.Server{
+		Handler:    handler,
+		TLSConfig:  tlsCfg,
 		QUICConfig: &quic.Config{Allow0RTT: true},
 	}
-	s.h3srv = h3srv
 
 	if s.packetConn == nil {
 		s.packetConn, err = net.ListenPacket("udp", s.addr)
@@ -268,5 +177,28 @@ func (s *Server) ListenAndServeH3() error {
 		}
 	}
 	log.Printf("Proxy HTTP/3 listening on %s → SSH backend %s (pooled=%v)", s.packetConn.LocalAddr(), s.backendAddr, s.pooled)
-	return h3srv.Serve(s.packetConn)
+	return s.h3srv.Serve(s.packetConn)
+}
+
+func (s *Server) getSSH() (*ssh.Client, bool, error) {
+	if !s.pooled {
+		c, err := ssh.Dial("tcp", s.backendAddr, s.sshCfg)
+		return c, false, err
+	}
+	if s.pool != nil {
+		return s.pool, true, nil
+	}
+	c, err := ssh.Dial("tcp", s.backendAddr, s.sshCfg)
+	if err != nil {
+		return nil, false, err
+	}
+	s.pool = c
+	return c, true, nil
+}
+
+func (s *Server) resetPool() {
+	if s.pool != nil {
+		s.pool.Close()
+		s.pool = nil
+	}
 }

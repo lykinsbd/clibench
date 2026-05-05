@@ -5,13 +5,9 @@
 package headend
 
 import (
-	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -19,6 +15,8 @@ import (
 
 	"github.com/quic-go/quic-go/http3"
 	"golang.org/x/crypto/ssh"
+
+	"github.com/lykinsbd/clibench/internal/sshutil"
 )
 
 // Server is an SSH server that forwards commands via HTTP to a site proxy.
@@ -32,28 +30,13 @@ type Server struct {
 	listener   net.Listener
 }
 
-// New creates an edge proxy. Transport is "https" or "http3".
+// New creates a headend proxy. Transport is "https" or "http3".
 func New(addr, backendURL, user, pass, transport string) (*Server, error) {
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return nil, err
-	}
-	signer, err := ssh.NewSignerFromKey(priv)
+	cfg, err := sshutil.ServerConfig(user, pass)
 	if err != nil {
 		return nil, err
 	}
 
-	sshCfg := &ssh.ServerConfig{
-		PasswordCallback: func(c ssh.ConnMetadata, p []byte) (*ssh.Permissions, error) {
-			if c.User() == user && string(p) == pass {
-				return nil, nil
-			}
-			return nil, fmt.Errorf("auth failed")
-		},
-	}
-	sshCfg.AddHostKey(signer)
-
-	tlsCfg := &tls.Config{InsecureSkipVerify: true}
 	var rt http.RoundTripper
 	if transport == "http3" {
 		rt = &http3.Transport{
@@ -63,7 +46,7 @@ func New(addr, backendURL, user, pass, transport string) (*Server, error) {
 			},
 		}
 	} else {
-		rt = &http.Transport{TLSClientConfig: tlsCfg}
+		rt = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
 	}
 
 	return &Server{
@@ -71,7 +54,7 @@ func New(addr, backendURL, user, pass, transport string) (*Server, error) {
 		backendURL: backendURL,
 		user:       user,
 		pass:       pass,
-		cfg:        sshCfg,
+		cfg:        cfg,
 		client:     &http.Client{Transport: rt, Timeout: 30 * time.Second},
 	}, nil
 }
@@ -97,46 +80,12 @@ func (s *Server) Close() error {
 
 // ListenAndServe starts accepting SSH connections.
 func (s *Server) ListenAndServe() error {
-	if s.listener == nil {
-		ln, err := net.Listen("tcp", s.addr)
-		if err != nil {
-			return err
-		}
-		s.listener = ln
-	}
-	log.Printf("Edge proxy SSH on %s → %s", s.listener.Addr(), s.backendURL)
-	for {
-		conn, err := s.listener.Accept()
-		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				return nil
-			}
-			return err
-		}
-		go s.handleConn(conn)
-	}
-}
-
-func (s *Server) handleConn(c net.Conn) {
-	defer c.Close()
-	sConn, chans, reqs, err := ssh.NewServerConn(c, s.cfg)
+	var err error
+	s.listener, err = sshutil.Listen(s.listener, s.addr, "Headend SSH")
 	if err != nil {
-		return
+		return err
 	}
-	defer sConn.Close()
-	go ssh.DiscardRequests(reqs)
-
-	for newCh := range chans {
-		if newCh.ChannelType() != "session" {
-			newCh.Reject(ssh.UnknownChannelType, "unsupported")
-			continue
-		}
-		ch, requests, err := newCh.Accept()
-		if err != nil {
-			continue
-		}
-		go s.handleSession(ch, requests)
-	}
+	return sshutil.Serve(s.listener, s.cfg, s.handleSession)
 }
 
 func (s *Server) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request) {
@@ -167,7 +116,6 @@ func (s *Server) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request) {
 func (s *Server) forward(payload string) (string, error) {
 	lines := strings.Split(strings.TrimSpace(payload), "\n")
 	if len(lines) == 1 {
-		// Single command → GET /admin/exec/
 		cmd := strings.ReplaceAll(strings.TrimSpace(lines[0]), " ", "+")
 		url := fmt.Sprintf("%s/admin/exec/%s", s.backendURL, cmd)
 		req, err := http.NewRequest("GET", url, nil)
@@ -186,7 +134,6 @@ func (s *Server) forward(payload string) (string, error) {
 		}
 		return string(body), nil
 	}
-	// Multi-line → POST /admin/config
 	url := fmt.Sprintf("%s/admin/config", s.backendURL)
 	req, err := http.NewRequest("POST", url, strings.NewReader(payload))
 	if err != nil {

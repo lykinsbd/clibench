@@ -11,15 +11,26 @@ package httpserver
 import (
 	"crypto/tls"
 	"errors"
-	"io"
 	"log"
 	"net"
 	"net/http"
 	"strings"
 
 	"github.com/lykinsbd/clibench/internal/device"
+	"github.com/lykinsbd/clibench/internal/httphandler"
 	"github.com/lykinsbd/clibench/internal/tlsutil"
 )
+
+// deviceRunner adapts *device.Device to httphandler.Runner.
+type deviceRunner struct{ dev *device.Device }
+
+func (d deviceRunner) RunCommands(cmds []string) (string, error) {
+	var out strings.Builder
+	for _, cmd := range cmds {
+		out.WriteString(d.dev.Exec(cmd))
+	}
+	return out.String(), nil
+}
 
 // Server is an HTTPS server backed by a Device.
 type Server struct {
@@ -35,9 +46,7 @@ func New(addr string, dev *device.Device) *Server {
 }
 
 // SetListener sets a custom net.Listener (e.g., one wrapped with latency injection).
-func (s *Server) SetListener(ln net.Listener) {
-	s.listener = ln
-}
+func (s *Server) SetListener(ln net.Listener) { s.listener = ln }
 
 // Addr returns the listener's address, or "" if not yet listening.
 func (s *Server) Addr() string {
@@ -63,14 +72,8 @@ func (s *Server) ListenAndServeTLS() error {
 		return err
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/admin/exec/", s.handleExec)
-	mux.HandleFunc("/admin/config", s.handleConfig)
-
-	s.srv = &http.Server{
-		Handler:   s.authMiddleware(mux),
-		TLSConfig: tlsCfg,
-	}
+	handler := httphandler.Mux(s.dev.Username, s.dev.Password, deviceRunner{s.dev})
+	s.srv = &http.Server{Handler: handler, TLSConfig: tlsCfg}
 
 	if s.listener == nil {
 		s.listener, err = net.Listen("tcp", s.addr)
@@ -86,65 +89,3 @@ func (s *Server) ListenAndServeTLS() error {
 	}
 	return err
 }
-
-func (s *Server) authMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user, pass, ok := r.BasicAuth()
-		if !ok || user != s.dev.Username || pass != s.dev.Password {
-			w.Header().Set("WWW-Authenticate", `Basic realm="device"`)
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-// handleExec handles GET /admin/exec/show+version or /admin/exec/cmd1/cmd2
-func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/admin/exec/")
-	if path == "" {
-		http.Error(w, "no command", http.StatusBadRequest)
-		return
-	}
-
-	// Split on "/" for multi-command support (ASA style)
-	parts := strings.Split(path, "/")
-	var out strings.Builder
-	for _, p := range parts {
-		cmd := strings.ReplaceAll(p, "+", " ")
-		cmd = strings.TrimSpace(cmd)
-		if cmd == "" {
-			continue
-		}
-		out.WriteString(s.dev.Exec(cmd))
-	}
-	w.Header().Set("Content-Type", "text/plain")
-	io.WriteString(w, out.String())
-}
-
-// handleConfig handles POST /admin/config with newline-delimited commands.
-func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
-		return
-	}
-	body, err := io.ReadAll(r.Body)
-	r.Body.Close()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	var out strings.Builder
-	for _, line := range strings.Split(string(body), "\n") {
-		cmd := strings.TrimSpace(line)
-		if cmd == "" {
-			continue
-		}
-		out.WriteString(s.dev.Exec(cmd))
-	}
-	w.Header().Set("Content-Type", "text/plain")
-	io.WriteString(w, out.String())
-}
-
-
