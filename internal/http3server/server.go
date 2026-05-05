@@ -80,5 +80,9 @@ func (s *Server) ListenAndServe() error {
 		}
 	}
 	log.Printf("HTTP/3 listening on %s", s.conn.LocalAddr())
-	return s.srv.Serve(s.conn)
+	err = s.srv.Serve(s.conn)
+	if err != nil && err.Error() == "server closed" {
+		return nil
+	}
+	return err
 }
