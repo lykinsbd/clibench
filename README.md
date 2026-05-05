@@ -199,13 +199,17 @@ cmd/
 internal/
   bench/      # Benchmark orchestration (modes, iteration logic)
   device/     # Command engine, prefix matching, transcript loading
-  sshserver/  # crypto/ssh server
-  httpserver/ # net/http + TLS server (ASA-style API)
-  http3server/ # HTTP/3 (QUIC) server (same ASA-style API over QUIC)
   headend/    # SSH→HTTP headend proxy (tunnel automation side)
+  http3server/ # HTTP/3 (QUIC) server (same ASA-style API over QUIC)
+  httphandler/ # Shared HTTP handler logic (Runner interface, auth, routes)
+  httpserver/ # net/http + TLS server (ASA-style API)
   latency/    # Userspace delay injection (fallback, --userspace flag)
   netem/      # tc netem setup via netlink (default, requires root)
+  pktcount/   # AF_PACKET real packet counter (Linux, requires root)
   proxy/      # HTTPS→SSH site proxy (fresh + pooled modes)
+  rtcount/    # Connection wrappers counting round trips + I/O ops
+  sshserver/  # crypto/ssh server
+  sshutil/    # Shared SSH server scaffolding (keygen, accept loop)
   stats/      # Benchmark statistics (percentile, summarize, runParallel)
   tlsutil/    # Shared self-signed TLS config generator
 scripts/      # Result generation and helper scripts
@@ -231,6 +235,7 @@ sudo go test -race -v -tags netem_root ./internal/netem/
 |---|---|---|
 | (none) | Nothing | All unit tests, integration tests, proxy tests |
 | `netem_root` | Root / `CAP_NET_ADMIN` | Tests that call `netem.Setup()` and verify kernel qdisc state |
+| `pktcount_root` | Root / `CAP_NET_RAW` | Tests that open AF_PACKET sockets for real packet counting |
 
 ### Test Coverage
 
