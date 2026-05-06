@@ -65,6 +65,8 @@ func (b *BenchCmd) has(t string) bool {
 //   ProxyPort+1      — proxy pooled-SSH mode (WAN delay)
 //   ProxyPort+2      — tunnel site HTTPS proxy (WAN delay)
 //   ProxyPort+3      — tunnel site HTTP/3 proxy (WAN delay)
+//   ProxyPort+4      — H3 proxy fresh-SSH mode (WAN delay)
+//   ProxyPort+5      — H3 proxy pooled-SSH mode (WAN delay)
 //   HeadendHTTPSPort — tunnel headend SSH (campus delay)
 //   HeadendH3Port    — tunnel headend SSH/H3 (campus delay)
 type benchEnv struct {
@@ -81,6 +83,8 @@ type benchEnv struct {
 	tunnelSiteHTTPSAddr string
 	tunnelSiteH3Port    int
 	tunnelSiteH3Addr    string
+	proxyH3FreshAddr    string
+	proxyH3PooledAddr   string
 	delay               time.Duration
 	campusDelay         time.Duration
 	rttMs               float64
@@ -105,6 +109,8 @@ func (b *BenchCmd) buildEnv() (*benchEnv, error) {
 		tunnelSiteHTTPSAddr: fmt.Sprintf("localhost:%d", b.ProxyPort+2),
 		tunnelSiteH3Port:    b.ProxyPort + 3,
 		tunnelSiteH3Addr:    fmt.Sprintf("localhost:%d", b.ProxyPort+3),
+		proxyH3FreshAddr:    fmt.Sprintf("localhost:%d", b.ProxyPort+4),
+		proxyH3PooledAddr:   fmt.Sprintf("localhost:%d", b.ProxyPort+5),
 		delay:               delay,
 		campusDelay:         1 * time.Millisecond,
 		rttMs:               float64(delay.Milliseconds()) * 2,
@@ -114,7 +120,7 @@ func (b *BenchCmd) buildEnv() (*benchEnv, error) {
 
 func (b *BenchCmd) setupLatency(e *benchEnv) error {
 	if !b.Userspace && e.delay > 0 {
-		wanPorts := []int{b.SSHPort, b.HTTPSPort, b.HTTP3Port, b.ProxyPort, b.ProxyPort + 1, e.tunnelSiteHTTPSPort, e.tunnelSiteH3Port}
+		wanPorts := []int{b.SSHPort, b.HTTPSPort, b.HTTP3Port, b.ProxyPort, b.ProxyPort + 1, b.ProxyPort + 4, b.ProxyPort + 5, e.tunnelSiteHTTPSPort, e.tunnelSiteH3Port}
 		campusPorts := []int{e.backendSSHPort, b.HeadendHTTPSPort, b.HeadendH3Port}
 		if err := netem.Setup(e.delay, e.campusDelay, wanPorts, campusPorts); err != nil {
 			return fmt.Errorf("tc netem setup (requires sudo): %w", err)
@@ -214,6 +220,12 @@ func (b *BenchCmd) startServers(e *benchEnv, dev *device.Device) error {
 	tunnelSiteH3 := proxy.New(e.tunnelSiteH3Addr, e.backendSSHAddr, b.User, b.Pass, true)
 	go tunnelSiteH3.ListenAndServeH3()
 
+	// H3 proxy (fresh + pooled SSH backends)
+	proxyH3Fresh := proxy.New(e.proxyH3FreshAddr, e.backendSSHAddr, b.User, b.Pass, false)
+	go proxyH3Fresh.ListenAndServeH3()
+	proxyH3Pooled := proxy.New(e.proxyH3PooledAddr, e.backendSSHAddr, b.User, b.Pass, true)
+	go proxyH3Pooled.ListenAndServeH3()
+
 	// Tunnel headend proxies
 	if err := startHeadend(e.headendHTTPSAddr, "https://"+e.tunnelSiteHTTPSAddr, "https", e.campusDelay); err != nil {
 		return err
@@ -238,6 +250,7 @@ func (b *BenchCmd) setupPktCounter(e *benchEnv) (*pktcount.Counter, func()) {
 	}
 
 	allPorts := []int{b.SSHPort, b.HTTPSPort, b.HTTP3Port, b.ProxyPort, b.ProxyPort + 1,
+		b.ProxyPort + 4, b.ProxyPort + 5,
 		e.backendSSHPort, e.tunnelSiteHTTPSPort, e.tunnelSiteH3Port,
 		b.HeadendHTTPSPort, b.HeadendH3Port}
 	pc, err := pktcount.New(allPorts)
@@ -293,7 +306,7 @@ func (b *BenchCmd) runBenchmarks(e *benchEnv, pc *pktcount.Counter) []stats.Resu
 		results = append(results, bench.HTTPS(c)...)
 	}
 	if b.has("proxy") {
-		results = append(results, bench.Proxy(bench.ProxyConfig{Config: cfg, FreshAddr: e.proxyAddr, PooledAddr: e.proxyPooledAddr})...)
+		results = append(results, bench.Proxy(bench.ProxyConfig{Config: cfg, FreshAddr: e.proxyAddr, PooledAddr: e.proxyPooledAddr, H3FreshAddr: e.proxyH3FreshAddr, H3PooledAddr: e.proxyH3PooledAddr})...)
 	}
 	if b.has("http3") {
 		c := cfg

@@ -90,6 +90,8 @@ Output is JSON to stdout. Logs go to stderr.
 | `multi-cmd` | HTTPS | All commands in one GET (ASA `/cmd1/cmd2` syntax) |
 | `fresh-ssh` | Proxy | HTTPS→proxy→fresh SSH per request |
 | `pooled-ssh` | Proxy | HTTPS→proxy→pooled SSH connection |
+| `h3-fresh-ssh` | Proxy | HTTP/3→proxy→fresh SSH per request |
+| `h3-pooled-ssh` | Proxy | HTTP/3→proxy→pooled SSH connection |
 | `fresh-conn` | HTTP/3 | New QUIC + HTTP/3 connection per iteration |
 | `keep-alive` | HTTP/3 | Shared QUIC connection across all iterations |
 | `batch-post` | HTTP/3 | All commands in one POST body over shared connection |
