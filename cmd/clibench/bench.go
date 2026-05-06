@@ -222,9 +222,9 @@ func (b *BenchCmd) startServers(e *benchEnv, dev *device.Device) error {
 		return err
 	}
 
-	// Wait for TCP servers to be ready
+	// Wait for TCP servers to be ready (dial timeout must exceed max RTT)
 	for _, addr := range []string{e.sshAddr, e.httpsAddr, e.backendSSHAddr, e.proxyAddr, e.headendHTTPSAddr} {
-		if err := waitReady(addr, 5*time.Second); err != nil {
+		if err := waitReady(addr, 10*time.Second); err != nil {
 			return err
 		}
 	}
@@ -344,12 +344,12 @@ func (b *BenchCmd) Run() error {
 func waitReady(addr string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		c, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+		c, err := net.DialTimeout("tcp", addr, 1*time.Second)
 		if err == nil {
 			c.Close()
 			return nil
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
 	return fmt.Errorf("server %s not ready after %v", addr, timeout)
 }
