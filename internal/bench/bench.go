@@ -621,7 +621,98 @@ func Proxy(c ProxyConfig) []stats.Result {
 		results = append(results, c.summarize("proxy", "h3-pooled-ssh", h3PooledTimes, h3PooledC))
 	}
 
+	// Keep-alive modes: reuse WAN connection across iterations (production-realistic)
+	c.pktReset()
+	var keepCC *rtcount.Conn
+	keepTr := &http.Transport{
+		TLSClientConfig: tlsCfg,
+		DialTLSContext: func(ctx context.Context, network, a string) (net.Conn, error) {
+			tc, err := net.Dial(network, a)
+			if err != nil {
+				return nil, err
+			}
+			keepCC = rtcount.Wrap(tc)
+			tlsConn := tls.Client(keepCC, tlsCfg)
+			if err := tlsConn.HandshakeContext(ctx); err != nil {
+				tc.Close()
+				return nil, err
+			}
+			return tlsConn, nil
+		},
+	}
+	keepClient := &http.Client{Transport: keepTr, Timeout: 30 * time.Second}
+	// Warmup to establish connection
+	_ = doProxyPost(keepClient, c.PooledAddr, c.User, c.Pass, payload)
+
+	keepC := newCounters(c.Iterations)
+	keepTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
+		var bt, br, bw int
+		if c.Concurrency == 1 && keepCC != nil {
+			bt, br, bw = keepCC.Trips(), keepCC.Reads(), keepCC.Writes()
+		}
+		start := time.Now()
+		if err := doProxyPost(keepClient, c.PooledAddr, c.User, c.Pass, payload); err != nil {
+			log.Printf("proxy keep-alive: %v", err)
+			return errDuration
+		}
+		if c.Concurrency == 1 && keepCC != nil {
+			keepC.recordConnDelta(idx, keepCC, bt, br, bw)
+		}
+		return time.Since(start)
+	})
+	results = append(results, c.summarize("proxy", "keep-alive", keepTimes, keepC))
+
+	// H3 keep-alive
+	if c.H3PooledAddr != "" {
+		c.pktReset()
+		var h3KeepCC *rtcount.PacketConn
+		h3KeepTr := &http3.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h3"}},
+			Dial:            h3Dial(&h3KeepCC),
+		}
+		h3KeepClient := &http.Client{Transport: h3KeepTr, Timeout: 30 * time.Second}
+		_ = doProxyPost(h3KeepClient, c.H3PooledAddr, c.User, c.Pass, payload)
+
+		h3KeepC := newCounters(c.Iterations)
+		h3KeepTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
+			var bt, br, bw int
+			if c.Concurrency == 1 && h3KeepCC != nil {
+				bt, br, bw = h3KeepCC.Trips(), h3KeepCC.Reads(), h3KeepCC.Writes()
+			}
+			start := time.Now()
+			if err := doProxyPost(h3KeepClient, c.H3PooledAddr, c.User, c.Pass, payload); err != nil {
+				log.Printf("proxy h3-keep-alive: %v", err)
+				return errDuration
+			}
+			if c.Concurrency == 1 && h3KeepCC != nil {
+				h3KeepC.recordPacketDelta(idx, h3KeepCC, bt, br, bw)
+			}
+			return time.Since(start)
+		})
+		h3KeepTr.Close()
+		results = append(results, c.summarize("proxy", "h3-keep-alive", h3KeepTimes, h3KeepC))
+	}
+
 	return results
+}
+
+func doProxyPost(client *http.Client, addr, user, pass, payload string) error {
+	url := fmt.Sprintf("https://%s/admin/config", addr)
+	req, err := http.NewRequest("POST", url, strings.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.SetBasicAuth(user, pass)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	_, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func doHTTPExec(client *http.Client, addr, user, pass string) error {
