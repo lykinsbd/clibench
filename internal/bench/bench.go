@@ -15,6 +15,8 @@ import (
 	"github.com/lykinsbd/clibench/internal/rtcount"
 	"github.com/lykinsbd/clibench/internal/stats"
 	"golang.org/x/crypto/ssh"
+
+	"github.com/quic-go/quic-go/http3"
 )
 
 var errDuration = stats.ErrDuration
@@ -486,8 +488,10 @@ func HTTPS(c Config) []stats.Result {
 // ProxyConfig extends Config with proxy-specific addresses.
 type ProxyConfig struct {
 	Config
-	FreshAddr  string // HTTPS proxy address (fresh SSH per request)
-	PooledAddr string // HTTPS proxy address (pooled SSH connection)
+	FreshAddr     string // HTTPS proxy address (fresh SSH per request)
+	PooledAddr    string // HTTPS proxy address (pooled SSH connection)
+	H3FreshAddr   string // HTTP/3 proxy address (fresh SSH per request)
+	H3PooledAddr  string // HTTP/3 proxy address (pooled SSH connection)
 }
 
 // Proxy runs all proxy benchmark modes and returns the results.
@@ -558,10 +562,66 @@ func Proxy(c ProxyConfig) []stats.Result {
 		return d
 	})
 
-	return []stats.Result{
+	results := []stats.Result{
 		freshResult,
 		c.summarize("proxy", "pooled-ssh", pooledTimes, pooledC),
 	}
+
+	// H3 proxy modes
+	if c.H3FreshAddr != "" {
+		h3TlsCfg := &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h3"}}
+
+		doProxyH3 := func(addr string) (time.Duration, int, int, int) {
+			start := time.Now()
+			var pc *rtcount.PacketConn
+			tr := &http3.Transport{TLSClientConfig: h3TlsCfg.Clone(), Dial: h3Dial(&pc)}
+			client := &http.Client{Transport: tr, Timeout: 30 * time.Second}
+			url := fmt.Sprintf("https://%s/admin/config", addr)
+			req, err := http.NewRequest("POST", url, strings.NewReader(payload))
+			if err != nil {
+				return errDuration, 0, 0, 0
+			}
+			req.SetBasicAuth(c.User, c.Pass)
+			resp, err := client.Do(req)
+			if err != nil {
+				log.Printf("proxy h3: %v", err)
+				tr.Close()
+				return errDuration, 0, 0, 0
+			}
+			_, _ = io.ReadAll(resp.Body)
+			resp.Body.Close()
+			tr.Close()
+			if resp.StatusCode != http.StatusOK {
+				log.Printf("proxy h3: HTTP %d", resp.StatusCode)
+				return errDuration, 0, 0, 0
+			}
+			var trips, reads, writes int
+			if pc != nil {
+				trips, reads, writes = pc.Trips(), pc.Reads(), pc.Writes()
+			}
+			return time.Since(start), trips, reads, writes
+		}
+
+		c.pktReset()
+		h3FreshC := newCounters(c.Iterations)
+		h3FreshTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
+			d, t, r, w := doProxyH3(c.H3FreshAddr)
+			h3FreshC.trips[idx], h3FreshC.reads[idx], h3FreshC.writes[idx] = t, r, w
+			return d
+		})
+		results = append(results, c.summarize("proxy", "h3-fresh-ssh", h3FreshTimes, h3FreshC))
+
+		c.pktReset()
+		h3PooledC := newCounters(c.Iterations)
+		h3PooledTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
+			d, t, r, w := doProxyH3(c.H3PooledAddr)
+			h3PooledC.trips[idx], h3PooledC.reads[idx], h3PooledC.writes[idx] = t, r, w
+			return d
+		})
+		results = append(results, c.summarize("proxy", "h3-pooled-ssh", h3PooledTimes, h3PooledC))
+	}
+
+	return results
 }
 
 func doHTTPExec(client *http.Client, addr, user, pass string) error {
