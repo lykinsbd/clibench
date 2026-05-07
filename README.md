@@ -20,8 +20,9 @@ emulates a Cisco IOS-XE device over:
   (`/admin/exec/`, `/admin/config`)
 - **HTTP/3** (port 8444/udp) — QUIC + HTTP/3 with the same ASA-style
   endpoints, including 0-RTT session resumption support
-- **Proxy** (port 9443) — HTTPS frontend that forwards to an SSH backend,
-  simulating the edge proxy pattern
+- **Proxy** (ports 9443–9448) — HTTPS and HTTP/3 frontends that forward
+  to an SSH backend, simulating the site proxy pattern (fresh, pooled,
+  and keep-alive connection modes)
 - **Tunnel** (headend + site proxy pair) — SSH-to-HTTP transparent WAN
   tunnel where both automation and device speak SSH, but the WAN segment
   uses HTTPS or HTTP/3 for fewer round trips
@@ -29,9 +30,14 @@ emulates a Cisco IOS-XE device over:
 All transports share the same command engine and transcript responses, so
 the only variable is the transport protocol itself.
 
+In addition to latency measurements, the benchmark captures:
+- **Round-trip counts** — write→read direction changes per mode
+- **I/O operation counts** — application-level Read/Write syscalls
+- **Wire-level packet counts** — real packets via AF_PACKET (requires root)
+
 ## Quick Start
 
-Requires Go 1.22+ and Linux with `tc` (iproute2). Root (or `CAP_NET_ADMIN`)
+Requires Go 1.26+ and Linux with `tc` (iproute2). Root (or `CAP_NET_ADMIN`)
 is needed for kernel-level latency injection.
 
 ```bash
@@ -53,6 +59,9 @@ sudo ./bin/clibench bench --latency regional --iterations 20 --commands 5 --tran
 
 # Tunnel benchmark (SSH-to-HTTP transparent WAN tunnel)
 sudo ./bin/clibench bench --latency regional --iterations 20 --commands 5 --transport tunnel-https
+
+# Proxy benchmark (HTTPS/HTTP3 → SSH site proxy)
+sudo ./bin/clibench bench --latency regional --iterations 20 --commands 5 --transport proxy
 
 # Multiple transports (comma-separated)
 sudo ./bin/clibench bench --latency regional --iterations 20 --commands 5 --transport ssh,https,http3
@@ -171,9 +180,11 @@ HTTPS compared to real networks. The published blog numbers all use
 - **Real device processing time.** The emulated device responds instantly.
   Real devices have CPU overhead for parsing, AAA lookups, and command
   execution that adds to total latency.
-- **TLS session resumption.** The HTTPS fresh-conn benchmark does a full
-  TLS 1.3 handshake every time. Real clients may use session tickets to
-  reduce subsequent handshakes to 1-RTT or 0-RTT.
+- **TLS 1.3 session resumption for HTTPS.** The HTTPS fresh-conn
+  benchmark does a full TLS 1.3 handshake every time. Real clients may
+  use session tickets to reduce subsequent handshakes to 1-RTT. (Note:
+  QUIC 0-RTT session resumption *is* tested via the `0rtt-resumption`
+  HTTP/3 mode.)
 
 ### Why the results are still directionally valid
 
@@ -190,10 +201,12 @@ scenario the [blog series](https://network-notes.com/posts/2026/cli-over-https-1
 
 ## Sample Results
 
-The `results/` directory contains sample JSON output from benchmark runs.
-Files prefixed with `netem-` use `tc netem`; others use the userspace
-fallback. The blog series uses `tc netem` results at n=20 for all
-published numbers.
+The `results/` directory contains sample JSON output from benchmark runs,
+organized by release version. Each versioned directory (e.g., `results/v0.6.0/`)
+contains one file per latency profile with all benchmark modes. See
+[`results/README.md`](results/README.md) for naming conventions and
+reproduction instructions. The blog series uses `tc netem` results at
+n=20 with 5 commands for all published numbers.
 
 ## Project Structure
 
@@ -210,7 +223,7 @@ internal/
   latency/    # Userspace delay injection (fallback, --userspace flag)
   netem/      # tc netem setup via netlink (default, requires root)
   pktcount/   # AF_PACKET real packet counter (Linux, requires root)
-  proxy/      # HTTPS→SSH site proxy (fresh + pooled modes)
+  proxy/      # HTTPS/HTTP3→SSH site proxy (fresh, pooled, keep-alive modes)
   rtcount/    # Connection wrappers counting round trips + I/O ops
   sshserver/  # crypto/ssh server
   sshutil/    # Shared SSH server scaffolding (keygen, accept loop)
