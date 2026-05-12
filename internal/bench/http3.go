@@ -44,8 +44,9 @@ func HTTP3(c Config) []stats.Result {
 
 	c.pktReset()
 	// Mode 1: fresh connection per iteration
-	freshC := newCounters(c.Iterations)
+	freshC := c.makeCounters()
 	freshTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
+		snap := c.resourceSnap()
 		start := time.Now()
 		var cc *rtcount.PacketConn
 		tr := &http3.Transport{TLSClientConfig: tlsCfg.Clone(), Dial: h3Dial(&cc)}
@@ -61,6 +62,7 @@ func HTTP3(c Config) []stats.Result {
 			freshC.recordPacket(idx, cc)
 		}
 		tr.Close()
+		c.resourceRecord(freshC, idx, snap)
 		return time.Since(start)
 	})
 
@@ -71,8 +73,9 @@ func HTTP3(c Config) []stats.Result {
 	keepClient := &http.Client{Transport: keepTr, Timeout: 30 * time.Second}
 	_ = doHTTPExec(keepClient, c.Addr, c.User, c.Pass)
 
-	keepC := newCounters(c.Iterations)
+	keepC := c.makeCounters()
 	keepTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
+		snap := c.resourceSnap()
 		var bt, br, bw int
 		if c.Concurrency == 1 && keepCC != nil {
 			bt, br, bw = keepCC.Trips(), keepCC.Reads(), keepCC.Writes()
@@ -87,6 +90,7 @@ func HTTP3(c Config) []stats.Result {
 		if c.Concurrency == 1 && keepCC != nil {
 			keepC.recordPacketDelta(idx, keepCC, bt, br, bw)
 		}
+		c.resourceRecord(keepC, idx, snap)
 		return time.Since(start)
 	})
 	keepTr.Close()
@@ -99,8 +103,9 @@ func HTTP3(c Config) []stats.Result {
 	batchClient := &http.Client{Transport: batchTr, Timeout: 30 * time.Second}
 	_ = doHTTPExec(batchClient, c.Addr, c.User, c.Pass)
 
-	batchC := newCounters(c.Iterations)
+	batchC := c.makeCounters()
 	batchTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
+		snap := c.resourceSnap()
 		var bt, br, bw int
 		if c.Concurrency == 1 && batchCC != nil {
 			bt, br, bw = batchCC.Trips(), batchCC.Reads(), batchCC.Writes()
@@ -126,6 +131,7 @@ func HTTP3(c Config) []stats.Result {
 		if c.Concurrency == 1 && batchCC != nil {
 			batchC.recordPacketDelta(idx, batchCC, bt, br, bw)
 		}
+		c.resourceRecord(batchC, idx, snap)
 		return time.Since(start)
 	})
 	batchTr.Close()
@@ -153,8 +159,9 @@ func HTTP3(c Config) []stats.Result {
 	warmTr.Close()
 	time.Sleep(50 * time.Millisecond)
 
-	zeroC := newCounters(c.Iterations)
+	zeroC := c.makeCounters()
 	zeroTimes := stats.RunParallel(c.Iterations, c.Concurrency, func(idx int) time.Duration {
+		snap := c.resourceSnap()
 		start := time.Now()
 		var cc *rtcount.PacketConn
 		tr := &http3.Transport{
@@ -174,6 +181,7 @@ func HTTP3(c Config) []stats.Result {
 			zeroC.recordPacket(idx, cc)
 		}
 		tr.Close()
+		c.resourceRecord(zeroC, idx, snap)
 		return time.Since(start)
 	})
 	results = append(results, c.summarize("http3", "0rtt-resumption", zeroTimes, zeroC))
