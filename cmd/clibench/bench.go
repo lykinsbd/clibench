@@ -31,6 +31,7 @@ type BenchCmd struct {
 	Commands    int      `help:"Commands per iteration." default:"1"`
 	Latency     string   `help:"Latency profile (${enum})." enum:"local,campus,regional,continental,intercontinental,transpacific" default:"local" short:"l"`
 	Userspace   bool     `help:"Use userspace latency injection (no root required)."`
+	Resource    bool     `help:"Capture CPU and memory usage per iteration."`
 	Output      string   `help:"Output format (${enum})." enum:"json,table,csv" default:"json" short:"o"`
 
 	SSHPort          int `help:"SSH listen port." default:"2222" group:"server"`
@@ -288,6 +289,7 @@ func (b *BenchCmd) runBenchmarks(e *benchEnv, pc *pktcount.Counter) []stats.Resu
 		Profile:     b.Latency,
 		RTTms:       e.rttMs,
 		Hostname:    b.Hostname,
+		Resource:    b.Resource,
 	}
 	if pc != nil {
 		cfg.PktCounter = pc

@@ -28,6 +28,9 @@ type Result struct {
 	WriteOps    int     `json:"write_ops,omitempty"`
 	PacketsIn   int     `json:"packets_in,omitempty"`
 	PacketsOut  int     `json:"packets_out,omitempty"`
+	CPUUs       int64   `json:"cpu_us,omitempty"`
+	AllocBytes  uint64  `json:"alloc_bytes,omitempty"`
+	Allocs      uint64  `json:"allocs,omitempty"`
 	AvgMs       float64 `json:"avg_ms"`
 	MinMs       float64 `json:"min_ms"`
 	MaxMs       float64 `json:"max_ms"`
@@ -38,9 +41,12 @@ type Result struct {
 
 // IterCounts holds per-iteration counters collected alongside durations.
 type IterCounts struct {
-	Trips  []int
-	Reads  []int
-	Writes []int
+	Trips      []int
+	Reads      []int
+	Writes     []int
+	CPUUs      []int64
+	AllocBytes []uint64
+	Allocs     []uint64
 }
 
 // SummarizeConfig holds the parameters for Summarize.
@@ -117,6 +123,9 @@ func Summarize(cfg SummarizeConfig) Result {
 		RoundTrips:  medianInts(ic.Trips),
 		ReadOps:     medianInts(ic.Reads),
 		WriteOps:    medianInts(ic.Writes),
+		CPUUs:       medianInt64s(ic.CPUUs),
+		AllocBytes:  medianUint64s(ic.AllocBytes),
+		Allocs:      medianUint64s(ic.Allocs),
 		AvgMs:       avg,
 		MinMs:       valid[0],
 		MaxMs:       valid[n-1],
@@ -134,6 +143,34 @@ func medianInts(s []int) int {
 	c := make([]int, len(s))
 	copy(c, s)
 	sort.Ints(c)
+	n := len(c)
+	if n%2 == 1 {
+		return c[n/2]
+	}
+	return (c[n/2-1] + c[n/2]) / 2
+}
+
+func medianInt64s(s []int64) int64 {
+	if len(s) == 0 {
+		return 0
+	}
+	c := make([]int64, len(s))
+	copy(c, s)
+	sort.Slice(c, func(i, j int) bool { return c[i] < c[j] })
+	n := len(c)
+	if n%2 == 1 {
+		return c[n/2]
+	}
+	return (c[n/2-1] + c[n/2]) / 2
+}
+
+func medianUint64s(s []uint64) uint64 {
+	if len(s) == 0 {
+		return 0
+	}
+	c := make([]uint64, len(s))
+	copy(c, s)
+	sort.Slice(c, func(i, j int) bool { return c[i] < c[j] })
 	n := len(c)
 	if n%2 == 1 {
 		return c[n/2]
