@@ -6,7 +6,7 @@ require (
 	github.com/alecthomas/kong v1.10.0
 	github.com/quic-go/quic-go v0.59.1
 	github.com/vishvananda/netlink v1.3.1
-	golang.org/x/crypto v0.51.0
+	golang.org/x/crypto v0.52.0
 )
 
 require (
