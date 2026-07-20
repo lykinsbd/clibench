@@ -27,9 +27,12 @@ var LatencyProfiles = map[string]time.Duration{
 	"local":            0,
 	"campus":           1 * time.Millisecond,
 	"regional":         15 * time.Millisecond,
+	"leo":              22 * time.Millisecond,
 	"continental":      35 * time.Millisecond,
+	"leo-remote":       50 * time.Millisecond,
 	"intercontinental": 75 * time.Millisecond,
 	"transpacific":     87 * time.Millisecond,
+	"geo":              300 * time.Millisecond,
 }
 
 // PktCounter is the interface for packet counting (satisfied by *pktcount.Counter).

@@ -29,7 +29,7 @@ type BenchCmd struct {
 	Iterations  int      `help:"Iterations per benchmark mode." default:"50" short:"n"`
 	Concurrency int      `help:"Concurrent workers." default:"1" short:"c"`
 	Commands    int      `help:"Commands per iteration." default:"1"`
-	Latency     string   `help:"Latency profile (${enum})." enum:"local,campus,regional,continental,intercontinental,transpacific" default:"local" short:"l"`
+	Latency     string   `help:"Latency profile (${enum})." enum:"local,campus,regional,leo,continental,leo-remote,intercontinental,transpacific,geo" default:"local" short:"l"`
 	Userspace   bool     `help:"Use userspace latency injection (no root required)."`
 	Resource    bool     `help:"Capture CPU and memory usage per iteration."`
 	Output      string   `help:"Output format (${enum})." enum:"json,table,csv" default:"json" short:"o"`
