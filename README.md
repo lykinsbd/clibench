@@ -54,6 +54,9 @@ sudo ./bin/clibench bench --latency regional --iterations 20 --commands 5
 # Simulated US↔Hong Kong (150ms RTT)
 sudo ./bin/clibench bench --latency intercontinental --iterations 20 --commands 5
 
+# Simulated GEO satellite (600ms RTT)
+sudo ./bin/clibench bench --latency geo --iterations 20 --commands 5
+
 # Single transport
 sudo ./bin/clibench bench --latency regional --iterations 20 --commands 5 --transport http3
 
@@ -119,11 +122,16 @@ Output is JSON to stdout. Logs go to stderr.
 | `local` | 0ms | Co-located / loopback | Baseline |
 | `campus` | 2ms | Same data center / campus | AWS intra-AZ |
 | `regional` | 30ms | Intra-country backbone | Verizon Mar 2026: US 29.9ms |
+| `leo` | 45ms | LEO satellite (Starlink) | Ookla Q1 2025: Starlink US median 45ms |
 | `continental` | 70ms | Transatlantic | Verizon Mar 2026: 70.2ms |
-| `intercontinental` | 150ms | US↔East Asia | Verizon Mar 2026: HK-US 145.5ms |
+| `leo-remote` | 100ms | LEO satellite (high-latitude / sparse PoP) | OneWeb TMA'25 measurements; arXiv 2510.13710 |
+| `intercontinental` | 150ms | US↔East Asia (also ≈ MEO satellite) | Verizon Mar 2026: HK-US 145.5ms |
 | `transpacific` | 175ms | US↔Australia/NZ | Verizon Mar 2026: NZ 174.2ms |
+| `geo` | 600ms | GEO satellite (HughesNet, Viasat) | Ookla Q1 2025: HughesNet 683ms, Viasat 684ms |
 
-Source: [Verizon Enterprise Monthly IP Latency Statistics](https://www.verizon.com/business/terms/latency/)
+Sources:
+- Terrestrial: [Verizon Enterprise Monthly IP Latency Statistics](https://www.verizon.com/business/terms/latency/)
+- Satellite: [Ookla Satellite Performance Report (July 2025)](https://ookla.com/articles/hughesnet-viasat-performance-2025), [OneWeb TMA'25 (Zhao et al.)](https://tma.ifip.org/2025/wp-content/uploads/sites/14/2025/06/tma2025-paper3.pdf)
 
 ## Methodology and Caveats
 
