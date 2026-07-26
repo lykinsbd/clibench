@@ -237,7 +237,7 @@ func GNMI(c Config) []stats.Result {
 				break
 			}
 		}
-		stream.CloseSend()
+		stream.CloseSend() //nolint:errcheck // best-effort close after sync
 
 		if c.Concurrency == 1 && subCC != nil {
 			subC.recordConnDelta(idx, subCC, bt, br, bw)
