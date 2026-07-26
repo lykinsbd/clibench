@@ -24,6 +24,13 @@ results/
     netem-intercontinental-n20-5cmd.json
     netem-transpacific-n20-5cmd.json
     netem-geo-n20-5cmd.json
+  v0.7.0/
+    netem-local-n20-5cmd.json
+    netem-regional-n20-5cmd.json
+    netem-geo-n10-5cmd.json
+    netem-gnmi-local-n20-5cmd.json
+    netem-gnmi-regional-n20-5cmd.json
+    netem-gnmi-geo-n20-5cmd.json
 ```
 
 ## Naming Convention

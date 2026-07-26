@@ -20,6 +20,8 @@ emulates a Cisco IOS-XE device over:
   (`/admin/exec/`, `/admin/config`)
 - **HTTP/3** (port 8444/udp) — QUIC + HTTP/3 with the same ASA-style
   endpoints, including 0-RTT session resumption support
+- **gNMI** (port 9339) — gRPC/HTTP/2 with binary protobuf encoding,
+  implementing OpenConfig gNMI Get/Set/Subscribe operations
 - **Proxy** (ports 9443–9448) — HTTPS and HTTP/3 frontends that forward
   to an SSH backend, simulating the site proxy pattern (fresh, pooled,
   and keep-alive connection modes)
@@ -110,6 +112,10 @@ Output is JSON to stdout. Logs go to stderr.
 | `keep-alive` | HTTP/3 | Shared QUIC connection across all iterations |
 | `batch-post` | HTTP/3 | All commands in one POST body over shared connection |
 | `0rtt-resumption` | HTTP/3 | QUIC 0-RTT session resumption (send data in first packet) |
+| `fresh-conn` | gNMI | New TCP + TLS + HTTP/2 + gRPC channel per iteration |
+| `reuse-stream` | gNMI | Shared gRPC connection, new unary Get RPC per command |
+| `batch-set` | gNMI | Multiple paths in one Set RPC (analogous to batch-post) |
+| `subscribe-once` | gNMI | ONCE subscription for all paths in a single streaming RPC |
 | `ssh-https-ssh` | Tunnel | SSH→headend→HTTPS(WAN)→site→SSH→device |
 | `ssh-https-ssh-batch` | Tunnel | Same with all commands in one SSH exec payload |
 | `ssh-http3-ssh` | Tunnel | SSH→headend→HTTP/3(WAN)→site→SSH→device |
@@ -225,6 +231,7 @@ internal/
   bench/      # Benchmark orchestration (modes, iteration logic)
   device/     # Command engine, prefix matching, transcript loading
   headend/    # SSH→HTTP headend proxy (tunnel automation side)
+  gnmiserver/  # gNMI (gRPC/HTTP/2) server (OpenConfig gNMI Get/Set/Subscribe)
   http3server/ # HTTP/3 (QUIC) server (same ASA-style API over QUIC)
   httphandler/ # Shared HTTP handler logic (Runner interface, auth, routes)
   httpserver/ # net/http + TLS server (ASA-style API)
