@@ -31,6 +31,12 @@ results/
     netem-gnmi-local-n20-5cmd.json
     netem-gnmi-regional-n20-5cmd.json
     netem-gnmi-geo-n20-5cmd.json
+  v0.8.0/
+    netem-local-n20-5cmd.json
+    netem-regional-n20-5cmd.json
+    netem-leo-n20-5cmd.json
+    netem-intercontinental-n20-5cmd.json
+    netem-geo-n10-5cmd.json
 ```
 
 ## Naming Convention
@@ -55,7 +61,7 @@ sudo ./bin/clibench bench \
   --output json > results/v0.5.0/netem-regional-n20-5cmd.json
 ```
 
-Each file contains all transports and modes (21 modes in v0.5.0) from a
+Each file contains all transports and modes (35 modes in v0.8.0) from a
 single benchmark run. The blog series uses `--iterations 20 --commands 5`
 as the standard configuration.
 
