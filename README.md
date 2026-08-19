@@ -1,7 +1,6 @@
 # clibench
 
 [![CI](https://github.com/lykinsbd/clibench/actions/workflows/ci.yml/badge.svg)](https://github.com/lykinsbd/clibench/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/lykinsbd/clibench)](https://goreportcard.com/report/github.com/lykinsbd/clibench)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 SSH vs HTTPS CLI transport benchmark. Companion code for the

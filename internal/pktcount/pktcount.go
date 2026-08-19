@@ -51,7 +51,7 @@ func New(ports []int) (*Counter, error) {
 
 	pm := make(map[uint16]bool, len(ports))
 	for _, p := range ports {
-		pm[uint16(p)] = true
+		pm[uint16(p)] = true //nolint:gosec // ports are validated 0-65535
 	}
 
 	return &Counter{fd: fd, ports: pm, done: make(chan struct{})}, nil

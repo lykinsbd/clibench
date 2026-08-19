@@ -136,11 +136,12 @@ func HTTP3(c Config) []stats.Result {
 	})
 	batchTr.Close()
 
-	results := []stats.Result{
+	results := make([]stats.Result, 0, 4)
+	results = append(results,
 		c.summarize("http3", "fresh-conn", freshTimes, freshC),
 		c.summarize("http3", "keep-alive", keepTimes, keepC),
 		c.summarize("http3", "batch-post", batchTimes, batchC),
-	}
+	)
 
 	c.pktReset()
 	// Mode 4: 0-RTT resumption
