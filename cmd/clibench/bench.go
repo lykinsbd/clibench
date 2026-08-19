@@ -18,15 +18,17 @@ import (
 	"github.com/lykinsbd/clibench/internal/httpserver"
 	latencyPkg "github.com/lykinsbd/clibench/internal/latency"
 	"github.com/lykinsbd/clibench/internal/netem"
+	"github.com/lykinsbd/clibench/internal/netconfserver"
 	"github.com/lykinsbd/clibench/internal/pktcount"
 	"github.com/lykinsbd/clibench/internal/proxy"
+	"github.com/lykinsbd/clibench/internal/restconfserver"
 	"github.com/lykinsbd/clibench/internal/sshserver"
 	"github.com/lykinsbd/clibench/internal/stats"
 )
 
 // BenchCmd runs transport benchmarks.
 type BenchCmd struct {
-	Transport   []string `help:"Transports to benchmark (${enum}). Comma-separated or repeated." enum:"ssh,https,http3,gnmi,proxy,tunnel-https,tunnel-http3,all" default:"all" short:"t"`
+	Transport   []string `help:"Transports to benchmark (${enum}). Comma-separated or repeated." enum:"ssh,https,http3,gnmi,netconf,restconf,proxy,tunnel-https,tunnel-http3,all" default:"all" short:"t"`
 	Iterations  int      `help:"Iterations per benchmark mode." default:"50" short:"n"`
 	Concurrency int      `help:"Concurrent workers." default:"1" short:"c"`
 	Commands    int      `help:"Commands per iteration." default:"1"`
@@ -39,6 +41,8 @@ type BenchCmd struct {
 	HTTPSPort        int `help:"HTTPS listen port." default:"8443" group:"server"`
 	HTTP3Port        int `help:"HTTP/3 listen port." default:"8444" group:"server"`
 	GNMIPort         int `help:"gNMI listen port." default:"9339" group:"server"`
+	NETCONFPort      int `help:"NETCONF listen port." default:"2830" group:"server"`
+	RESTCONFPort     int `help:"RESTCONF listen port." default:"8445" group:"server"`
 	ProxyPort        int `help:"Proxy listen port." default:"9443" group:"server"`
 	HeadendHTTPSPort int `help:"Headend proxy SSH port (HTTPS WAN)." default:"2223" group:"server"`
 	HeadendH3Port    int `help:"Headend proxy SSH port (HTTP/3 WAN)." default:"2224" group:"server"`
@@ -77,6 +81,8 @@ type benchEnv struct {
 	httpsAddr           string
 	http3Addr           string
 	gnmiAddr            string
+	netconfAddr         string
+	restconfAddr        string
 	backendSSHPort      int
 	backendSSHAddr      string
 	proxyAddr           string
@@ -104,6 +110,8 @@ func (b *BenchCmd) buildEnv() (*benchEnv, error) {
 		httpsAddr:           fmt.Sprintf("localhost:%d", b.HTTPSPort),
 		http3Addr:           fmt.Sprintf("localhost:%d", b.HTTP3Port),
 		gnmiAddr:            fmt.Sprintf("localhost:%d", b.GNMIPort),
+		netconfAddr:         fmt.Sprintf("localhost:%d", b.NETCONFPort),
+		restconfAddr:        fmt.Sprintf("localhost:%d", b.RESTCONFPort),
 		backendSSHPort:      b.SSHPort + 1000,
 		backendSSHAddr:      fmt.Sprintf("localhost:%d", b.SSHPort+1000),
 		proxyAddr:           fmt.Sprintf("localhost:%d", b.ProxyPort),
@@ -125,7 +133,7 @@ func (b *BenchCmd) buildEnv() (*benchEnv, error) {
 
 func (b *BenchCmd) setupLatency(e *benchEnv) error {
 	if !b.Userspace && e.delay > 0 {
-		wanPorts := []int{b.SSHPort, b.HTTPSPort, b.HTTP3Port, b.GNMIPort, b.ProxyPort, b.ProxyPort + 1, b.ProxyPort + 4, b.ProxyPort + 5, e.tunnelSiteHTTPSPort, e.tunnelSiteH3Port}
+		wanPorts := []int{b.SSHPort, b.HTTPSPort, b.HTTP3Port, b.GNMIPort, b.NETCONFPort, b.RESTCONFPort, b.ProxyPort, b.ProxyPort + 1, b.ProxyPort + 4, b.ProxyPort + 5, e.tunnelSiteHTTPSPort, e.tunnelSiteH3Port}
 		campusPorts := []int{e.backendSSHPort, b.HeadendHTTPSPort, b.HeadendH3Port}
 		if err := netem.Setup(e.delay, e.campusDelay, wanPorts, campusPorts); err != nil {
 			return fmt.Errorf("tc netem setup (requires sudo): %w", err)
@@ -227,6 +235,28 @@ func (b *BenchCmd) startServers(e *benchEnv, dev *device.Device) error {
 	gnmiSrv.SetListener(wrapLn(gnmiLn, e.delay))
 	go gnmiSrv.ListenAndServe()
 
+	// NETCONF server
+	netconfLn, err := net.Listen("tcp", e.netconfAddr)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", e.netconfAddr, err)
+	}
+	netconfSrv, err := netconfserver.New(e.netconfAddr, dev)
+	if err != nil {
+		netconfLn.Close()
+		return fmt.Errorf("netconf: %w", err)
+	}
+	netconfSrv.SetListener(wrapLn(netconfLn, e.delay))
+	go netconfSrv.ListenAndServe()
+
+	// RESTCONF server
+	restconfLn, err := net.Listen("tcp", e.restconfAddr)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", e.restconfAddr, err)
+	}
+	restconfSrv := restconfserver.New(e.restconfAddr, dev)
+	restconfSrv.SetListener(wrapLn(restconfLn, e.delay))
+	go restconfSrv.ListenAndServeTLS()
+
 	// Tunnel site proxies
 	if err := startProxy(e.tunnelSiteHTTPSAddr, e.backendSSHAddr, true, e.delay); err != nil {
 		return err
@@ -249,7 +279,7 @@ func (b *BenchCmd) startServers(e *benchEnv, dev *device.Device) error {
 	}
 
 	// Wait for TCP servers to be ready (dial timeout must exceed max RTT)
-	for _, addr := range []string{e.sshAddr, e.httpsAddr, e.gnmiAddr, e.backendSSHAddr, e.proxyAddr, e.headendHTTPSAddr} {
+	for _, addr := range []string{e.sshAddr, e.httpsAddr, e.gnmiAddr, e.netconfAddr, e.restconfAddr, e.backendSSHAddr, e.proxyAddr, e.headendHTTPSAddr} {
 		if err := waitReady(addr, 10*time.Second); err != nil {
 			return err
 		}
@@ -263,7 +293,7 @@ func (b *BenchCmd) setupPktCounter(e *benchEnv) (*pktcount.Counter, func()) {
 		return nil, func() {}
 	}
 
-	allPorts := []int{b.SSHPort, b.HTTPSPort, b.HTTP3Port, b.GNMIPort, b.ProxyPort, b.ProxyPort + 1,
+	allPorts := []int{b.SSHPort, b.HTTPSPort, b.HTTP3Port, b.GNMIPort, b.NETCONFPort, b.RESTCONFPort, b.ProxyPort, b.ProxyPort + 1,
 		b.ProxyPort + 4, b.ProxyPort + 5,
 		e.backendSSHPort, e.tunnelSiteHTTPSPort, e.tunnelSiteH3Port,
 		b.HeadendHTTPSPort, b.HeadendH3Port}
@@ -332,6 +362,16 @@ func (b *BenchCmd) runBenchmarks(e *benchEnv, pc *pktcount.Counter) []stats.Resu
 		c := cfg
 		c.Addr = e.gnmiAddr
 		results = append(results, bench.GNMI(c)...)
+	}
+	if b.has("netconf") {
+		c := cfg
+		c.Addr = e.netconfAddr
+		results = append(results, bench.NETCONF(c)...)
+	}
+	if b.has("restconf") {
+		c := cfg
+		c.Addr = e.restconfAddr
+		results = append(results, bench.RESTCONF(c)...)
 	}
 	if b.has("tunnel-https") {
 		results = append(results, bench.Tunnel(bench.TunnelConfig{Config: cfg, HTTPSHeadendAddr: e.headendHTTPSAddr})...)

@@ -22,6 +22,10 @@ emulates a Cisco IOS-XE device over:
   endpoints, including 0-RTT session resumption support
 - **gNMI** (port 9339) — gRPC/HTTP/2 with binary protobuf encoding,
   implementing OpenConfig gNMI Get/Set/Subscribe operations
+- **NETCONF** (port 2830) — RFC 6241 over SSH subsystem with RFC 6242
+  chunked framing, XML-encoded RPCs (`<get>`, `<edit-config>`, `<commit>`)
+- **RESTCONF** (port 8445) — RFC 8040 over HTTPS with YANG-modeled paths,
+  JSON and XML response envelopes, YANG PATCH batch operations
 - **Proxy** (ports 9443–9448) — HTTPS and HTTP/3 frontends that forward
   to an SSH backend, simulating the site proxy pattern (fresh, pooled,
   and keep-alive connection modes)
@@ -116,6 +120,14 @@ Output is JSON to stdout. Logs go to stderr.
 | `reuse-stream` | gNMI | Shared gRPC connection, new unary Get RPC per command |
 | `batch-set` | gNMI | Multiple paths in one Set RPC (analogous to batch-post) |
 | `subscribe-once` | gNMI | ONCE subscription for all paths in a single streaming RPC |
+| `fresh-session` | NETCONF | New TCP + SSH + subsystem + hello exchange per iteration |
+| `reuse-session` | NETCONF | Shared NETCONF session, new `<get>` RPC per command |
+| `batch-rpc` | NETCONF | Multiple `<get>` RPCs pipelined on one session |
+| `edit-commit` | NETCONF | `<edit-config>` + `<commit>` sequence (config workflow) |
+| `fresh-conn` | RESTCONF | New TCP + TLS per iteration, GET a single YANG path |
+| `keep-alive` | RESTCONF | Shared TLS connection, GET per command |
+| `batch-patch` | RESTCONF | YANG PATCH with multiple edits in one request |
+| `json-vs-xml` | RESTCONF | Keep-alive with `Accept: application/yang-data+xml` |
 | `ssh-https-ssh` | Tunnel | SSH→headend→HTTPS(WAN)→site→SSH→device |
 | `ssh-https-ssh-batch` | Tunnel | Same with all commands in one SSH exec payload |
 | `ssh-http3-ssh` | Tunnel | SSH→headend→HTTP/3(WAN)→site→SSH→device |
@@ -208,6 +220,15 @@ model. SSH's channel-open/exec/data/close sequence requires more
 request-response exchanges than HTTPS's single request-response. This
 structural difference holds regardless of how latency is injected.
 
+The broader finding across all transports: **batch modes converge to ~1
+round trip regardless of protocol** (HTTPS batch-post, HTTP/3 batch-post,
+gNMI batch-set, NETCONF batch-rpc, RESTCONF batch-patch all measure ~1 RT).
+The difference between protocols shows up in fresh-connection overhead and
+per-command sequential modes. NETCONF fresh-session (14 RTs) is the most
+expensive due to SSH + subsystem + XML hello exchange. RESTCONF tracks HTTPS
+nearly identically, confirming that structured payload format (JSON/XML vs
+raw text) adds negligible latency compared to transport cost.
+
 At zero latency (local profile), SSH actually beats HTTPS because the TLS
 handshake has higher CPU overhead than the SSH handshake. The HTTPS
 advantage only appears when network latency dominates, which is the
@@ -237,8 +258,10 @@ internal/
   httpserver/ # net/http + TLS server (ASA-style API)
   latency/    # Userspace delay injection (fallback, --userspace flag)
   netem/      # tc netem setup via netlink (default, requires root)
+  netconfserver/ # NETCONF 1.1 over SSH subsystem (RFC 6241/6242)
   pktcount/   # AF_PACKET real packet counter (Linux, requires root)
   proxy/      # HTTPS/HTTP3→SSH site proxy (fresh, pooled, keep-alive modes)
+  restconfserver/ # RESTCONF (RFC 8040) over HTTPS with YANG paths + JSON/XML
   rtcount/    # Connection wrappers counting round trips + I/O ops
   sshserver/  # crypto/ssh server
   sshutil/    # Shared SSH server scaffolding (keygen, accept loop)
