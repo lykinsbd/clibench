@@ -1,5 +1,9 @@
 version: "2"
 linters:
+  enable:
+    - gocritic
+    - gosec
+    - prealloc
   settings:
     errcheck:
       exclude-functions:
@@ -12,6 +16,14 @@ linters:
         - io.WriteString
         # Best-effort teardown — qdisc may already be removed
         - github.com/vishvananda/netlink.QdiscDel
+    gosec:
+      excludes:
+        # We intentionally use InsecureSkipVerify (self-signed certs in benchmarks)
+        - G402
+        # We intentionally use InsecureIgnoreHostKey (benchmark SSH clients)
+        - G106
+        # Test file permissions are fine at 0644
+        - G306
   exclusions:
     generated: lax
     presets:
@@ -27,6 +39,14 @@ linters:
       - linters:
           - errcheck
         source: "go .+\\.(ListenAndServe|ListenAndServeTLS|ListenAndServeH3)\\(\\)"
+      # gosec: XSS is not relevant for CLI output (not a web app)
+      - linters:
+          - gosec
+        text: "G705"
+      # gosec: Slowloris is acceptable for a local benchmark server
+      - linters:
+          - gosec
+        text: "G112"
     paths:
       - third_party$
       - builtin$

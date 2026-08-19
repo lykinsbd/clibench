@@ -52,7 +52,7 @@ func addNetemBand(band uint16, delay time.Duration, ports []int) error {
 			Handle:    netlink.MakeHandle(band*10, 0),
 			Parent:    netlink.MakeHandle(1, band),
 		},
-		netlink.NetemQdiscAttrs{Latency: uint32(delay.Microseconds())},
+		netlink.NetemQdiscAttrs{Latency: uint32(delay.Microseconds())}, //nolint:gosec // bounded: max 600ms = 600000μs, fits uint32
 	)
 	if err := netlink.QdiscAdd(netem); err != nil {
 		return fmt.Errorf("add netem delay %v: %w", delay, err)
@@ -67,11 +67,11 @@ func addNetemBand(band uint16, delay time.Duration, ports []int) error {
 
 func addPortFilter(port int, band uint16) error {
 	// dport: lower 16 bits at offset 20 (TCP/UDP header after 20-byte IP header)
-	if err := addU32Filter(uint32(port), 0xffff, 20, band); err != nil {
+	if err := addU32Filter(uint32(port), 0xffff, 20, band); err != nil { //nolint:gosec // port is 0-65535
 		return fmt.Errorf("dport %d: %w", port, err)
 	}
 	// sport: upper 16 bits at offset 20
-	if err := addU32Filter(uint32(port)<<16, 0xffff0000, 20, band); err != nil {
+	if err := addU32Filter(uint32(port)<<16, 0xffff0000, 20, band); err != nil { //nolint:gosec // port is 0-65535
 		return fmt.Errorf("sport %d: %w", port, err)
 	}
 	return nil

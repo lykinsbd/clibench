@@ -62,7 +62,7 @@ func cpuNanos() int64 {
 	fields := 0
 	var utime, stime int64
 	for j := i + 2; j < len(data); j++ {
-		if data[j] == ' ' {
+		if data[j] == ' ' { //nolint:gocritic // if-else is clearer here than switch
 			fields++
 		} else if fields == 11 {
 			for j < len(data) && data[j] >= '0' && data[j] <= '9' {
