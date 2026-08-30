@@ -32,10 +32,12 @@ type BenchCmd struct {
 	Iterations  int      `help:"Iterations per benchmark mode." default:"50" short:"n"`
 	Concurrency int      `help:"Concurrent workers." default:"1" short:"c"`
 	Commands    int      `help:"Commands per iteration." default:"1"`
-	Latency     string   `help:"Latency profile (${enum})." enum:"local,campus,regional,leo,continental,leo-remote,intercontinental,transpacific,geo" default:"local" short:"l"`
-	Userspace   bool     `help:"Use userspace latency injection (no root required)."`
-	Resource    bool     `help:"Capture CPU and memory usage per iteration."`
-	Output      string   `help:"Output format (${enum})." enum:"json,table,csv" default:"json" short:"o"`
+	Latency     string        `help:"Latency profile (${enum})." enum:"local,campus,regional,leo,continental,leo-remote,intercontinental,transpacific,geo" default:"local" short:"l"`
+	Jitter      time.Duration `help:"Latency variance (standard deviation) added to WAN delay, e.g. 10ms."`
+	Loss        float64       `help:"Packet loss percentage on the WAN link, e.g. 1.0 for 1%."`
+	Userspace   bool          `help:"Use userspace latency injection (no root required)."`
+	Resource    bool          `help:"Capture CPU and memory usage per iteration."`
+	Output      string        `help:"Output format (${enum})." enum:"json,table,csv" default:"json" short:"o"`
 
 	SSHPort          int `help:"SSH listen port." default:"2222" group:"server"`
 	HTTPSPort        int `help:"HTTPS listen port." default:"8443" group:"server"`
@@ -135,12 +137,22 @@ func (b *BenchCmd) setupLatency(e *benchEnv) error {
 	if !b.Userspace && e.delay > 0 {
 		wanPorts := []int{b.SSHPort, b.HTTPSPort, b.HTTP3Port, b.GNMIPort, b.NETCONFPort, b.RESTCONFPort, b.ProxyPort, b.ProxyPort + 1, b.ProxyPort + 4, b.ProxyPort + 5, e.tunnelSiteHTTPSPort, e.tunnelSiteH3Port}
 		campusPorts := []int{e.backendSSHPort, b.HeadendHTTPSPort, b.HeadendH3Port}
-		if err := netem.Setup(e.delay, e.campusDelay, wanPorts, campusPorts); err != nil {
+		if err := netem.Setup(netem.Config{
+			WANDelay:    e.delay,
+			CampusDelay: e.campusDelay,
+			WANPorts:    wanPorts,
+			CampusPorts: campusPorts,
+			Jitter:      b.Jitter,
+			Loss:        b.Loss,
+		}); err != nil {
 			return fmt.Errorf("tc netem setup (requires sudo): %w", err)
 		}
-		log.Printf("tc netem: %dms one-way on ports %v, %dms on ports %v",
-			e.delay.Milliseconds(), wanPorts, e.campusDelay.Milliseconds(), campusPorts)
+		log.Printf("tc netem: %dms one-way on ports %v, %dms on ports %v (jitter=%v, loss=%.2f%%)",
+			e.delay.Milliseconds(), wanPorts, e.campusDelay.Milliseconds(), campusPorts, b.Jitter, b.Loss)
 	} else if b.Userspace && e.delay > 0 {
+		if b.Loss > 0 {
+			log.Printf("WARNING: --loss with --userspace is a crude approximation; kernel netem is far more accurate")
+		}
 		log.Printf("Using userspace latency injection (less accurate than tc netem)")
 	}
 	return nil
@@ -149,7 +161,7 @@ func (b *BenchCmd) setupLatency(e *benchEnv) error {
 func (b *BenchCmd) startServers(e *benchEnv, dev *device.Device) error {
 	wrapLn := func(ln net.Listener, d time.Duration) net.Listener {
 		if b.Userspace && d > 0 {
-			return &latencyPkg.Listener{Listener: ln, Delay: d}
+			return &latencyPkg.Listener{Listener: ln, Delay: d, Jitter: b.Jitter, Loss: b.Loss}
 		}
 		return ln
 	}
@@ -331,6 +343,8 @@ func (b *BenchCmd) runBenchmarks(e *benchEnv, pc *pktcount.Counter) []stats.Resu
 		Commands:    b.Commands,
 		Profile:     b.Latency,
 		RTTms:       e.rttMs,
+		JitterMs:    float64(b.Jitter.Milliseconds()),
+		LossPct:     b.Loss,
 		Hostname:    b.Hostname,
 		Resource:    b.Resource,
 	}

@@ -23,6 +23,8 @@ type Result struct {
 	Concurrency int     `json:"concurrency"`
 	Latency     string  `json:"latency_profile"`
 	RTTms       float64 `json:"simulated_rtt_ms"`
+	JitterMs    float64 `json:"jitter_ms,omitempty"`
+	LossPct     float64 `json:"loss_pct,omitempty"`
 	RoundTrips  int     `json:"round_trips,omitempty"`
 	ReadOps     int     `json:"read_ops,omitempty"`
 	WriteOps    int     `json:"write_ops,omitempty"`
@@ -58,6 +60,8 @@ type SummarizeConfig struct {
 	Concurrency int
 	Profile     string
 	RTTms       float64
+	JitterMs    float64
+	LossPct     float64
 	Times       []time.Duration
 	Counts      IterCounts
 }
@@ -84,6 +88,7 @@ func Summarize(cfg SummarizeConfig) Result {
 			Transport: transport, Operation: op, Commands: cfg.Commands,
 			Iterations: iterations, Errors: errors, Concurrency: cfg.Concurrency,
 			Latency: cfg.Profile, RTTms: cfg.RTTms,
+			JitterMs: cfg.JitterMs, LossPct: cfg.LossPct,
 		}
 	}
 
@@ -120,6 +125,8 @@ func Summarize(cfg SummarizeConfig) Result {
 		Concurrency: cfg.Concurrency,
 		Latency:     cfg.Profile,
 		RTTms:       cfg.RTTms,
+		JitterMs:    cfg.JitterMs,
+		LossPct:     cfg.LossPct,
 		RoundTrips:  medianInts(ic.Trips),
 		ReadOps:     medianInts(ic.Reads),
 		WriteOps:    medianInts(ic.Writes),
