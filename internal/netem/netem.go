@@ -15,8 +15,20 @@ import (
 
 const loopbackIndex = 1
 
+// Config holds the netem parameters for a benchmark run.
+// Jitter and Loss apply to the WAN band only; the campus band models a
+// fixed local link with deterministic delay.
+type Config struct {
+	WANDelay    time.Duration
+	CampusDelay time.Duration
+	WANPorts    []int
+	CampusPorts []int
+	Jitter      time.Duration // latency standard deviation (WAN band)
+	Loss        float64       // packet loss percentage, e.g. 1.0 = 1% (WAN band)
+}
+
 // Setup configures tc netem on the loopback interface with per-port delays.
-func Setup(wanDelay, campusDelay time.Duration, wanPorts, campusPorts []int) error {
+func Setup(c Config) error {
 	Teardown()
 
 	prio := netlink.NewPrio(netlink.QdiscAttrs{
@@ -30,14 +42,15 @@ func Setup(wanDelay, campusDelay time.Duration, wanPorts, campusPorts []int) err
 		return fmt.Errorf("add prio qdisc: %w", err)
 	}
 
-	if wanDelay > 0 {
-		if err := addNetemBand(2, wanDelay, wanPorts); err != nil {
+	if c.WANDelay > 0 {
+		if err := addNetemBand(2, c.WANDelay, c.Jitter, c.Loss, c.WANPorts); err != nil {
 			Teardown()
 			return fmt.Errorf("wan band: %w", err)
 		}
 	}
-	if campusDelay > 0 {
-		if err := addNetemBand(3, campusDelay, campusPorts); err != nil {
+	if c.CampusDelay > 0 {
+		// Campus band models a fixed local link — no jitter or loss.
+		if err := addNetemBand(3, c.CampusDelay, 0, 0, c.CampusPorts); err != nil {
 			Teardown()
 			return fmt.Errorf("campus band: %w", err)
 		}
@@ -45,14 +58,18 @@ func Setup(wanDelay, campusDelay time.Duration, wanPorts, campusPorts []int) err
 	return nil
 }
 
-func addNetemBand(band uint16, delay time.Duration, ports []int) error {
+func addNetemBand(band uint16, delay, jitter time.Duration, loss float64, ports []int) error {
 	netem := netlink.NewNetem(
 		netlink.QdiscAttrs{
 			LinkIndex: loopbackIndex,
 			Handle:    netlink.MakeHandle(band*10, 0),
 			Parent:    netlink.MakeHandle(1, band),
 		},
-		netlink.NetemQdiscAttrs{Latency: uint32(delay.Microseconds())}, //nolint:gosec // bounded: max 600ms = 600000μs, fits uint32
+		netlink.NetemQdiscAttrs{
+			Latency: uint32(delay.Microseconds()),  //nolint:gosec // bounded: max 600ms = 600000μs, fits uint32
+			Jitter:  uint32(jitter.Microseconds()), //nolint:gosec // bounded jitter value fits uint32
+			Loss:    float32(loss),
+		},
 	)
 	if err := netlink.QdiscAdd(netem); err != nil {
 		return fmt.Errorf("add netem delay %v: %w", delay, err)

@@ -174,6 +174,35 @@ simulation short of running on separate physical hosts.
 Requires root or `CAP_NET_ADMIN`. The tool sets up the qdisc before
 benchmarking and tears it down on exit.
 
+### Jitter and packet loss (`--jitter`, `--loss`)
+
+Beyond fixed delay, two flags model degraded network conditions on the WAN
+band (they don't apply to the campus/proxy-backend link):
+
+- **`--jitter <duration>`** adds latency variance as a standard deviation
+  around the base delay, using netem's normal distribution. Real satellite
+  links have significant jitter — Starlink ±10-20ms typical, spiking during
+  handovers; GEO ±20-50ms from atmospheric conditions.
+- **`--loss <percent>`** drops packets at the given rate, triggering TCP
+  retransmission (or QUIC loss recovery for HTTP/3). Multi-round-trip
+  protocols compound loss probability: at 1% loss, an SSH fresh-conn with
+  16 round trips has a ~15% chance of at least one retransmission per
+  operation, while a single-round-trip batch mode has just 1%.
+
+```bash
+# Regional latency with 10ms jitter
+sudo ./bin/clibench bench --latency regional --jitter 10ms --iterations 20
+
+# LEO satellite with jitter and 0.5% packet loss
+sudo ./bin/clibench bench --latency leo --jitter 15ms --loss 0.5 --iterations 20
+```
+
+The injected jitter and loss values are recorded in the JSON output
+(`jitter_ms`, `loss_pct`). Both work with `--userspace` as a crude
+approximation (gaussian sleep variance and an extra delay penalty on
+"lost" operations), but kernel netem is far more accurate because it
+triggers real TCP retransmission behavior.
+
 ### Fallback: userspace delay injection (`--userspace` flag)
 
 For environments where `sudo` isn't available, the `--userspace` flag
@@ -200,8 +229,10 @@ HTTPS compared to real networks. The published blog numbers all use
 
 ### What neither model captures
 
-- **TCP congestion, packet loss, or jitter.** All connections are
-  localhost with deterministic delay. Real networks have variance.
+- **TCP congestion control under sustained load.** Connections are
+  localhost, so there's no bufferbloat or cross-traffic congestion. Jitter
+  and packet loss *can* be injected (`--jitter`, `--loss`) via tc netem, but
+  congestion-window dynamics from competing flows are not modeled.
 - **Real device processing time.** The emulated device responds instantly.
   Real devices have CPU overhead for parsing, AAA lookups, and command
   execution that adds to total latency.

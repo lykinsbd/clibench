@@ -51,6 +51,8 @@ type Config struct {
 	Commands    int        // commands per iteration
 	Profile     string     // latency profile name for result labeling
 	RTTms       float64    // simulated round-trip time in milliseconds
+	JitterMs    float64    // simulated jitter (stddev) in milliseconds
+	LossPct     float64    // simulated packet loss percentage
 	Hostname    string     // device hostname for PTY prompt detection
 	PktCounter  PktCounter // optional packet counter (nil when unavailable)
 	Resource    bool       // capture CPU and memory per iteration
@@ -73,6 +75,8 @@ func (c Config) summarize(transport, op string, times []time.Duration, counts co
 		Concurrency: c.Concurrency,
 		Profile:     c.Profile,
 		RTTms:       c.RTTms,
+		JitterMs:    c.JitterMs,
+		LossPct:     c.LossPct,
 		Times:       times,
 		Counts:      counts.iter(),
 	})
