@@ -76,8 +76,9 @@ sudo ./bin/clibench bench --latency regional --iterations 20 --commands 5 --tran
 
 # Connection scaling sweep: hold N persistent connections open at once and
 # measure steady-state cost (setup time, per-connection p50/p95, ops/sec, live
-# heap) as N grows. Supported transports: ssh, https, gnmi.
-./bin/clibench bench --latency regional --concurrency-sweep 1,10,50,100,200 --commands 3 --transport ssh,https,gnmi --output table
+# heap) as N grows. Supported transports: ssh, https, gnmi, http3, netconf,
+# restconf (http3 holds N separate QUIC connections, one UDP socket each).
+./bin/clibench bench --latency regional --concurrency-sweep 1,10,50,100,200 --commands 3 --transport ssh,https,gnmi,http3,netconf,restconf --output table
 
 # Table output for quick comparison
 ./bin/clibench bench --latency local --iterations 20 --commands 5 --output table
