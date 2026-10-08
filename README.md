@@ -88,6 +88,12 @@ sudo ./bin/clibench bench --latency regional --iterations 20 --commands 5 --tran
 
 # Quick smoke test
 ./bin/clibench smoketest
+
+# Generate a comparison report from a saved result file
+./bin/clibench report results/v0.8.0/netem-regional-n20-5cmd.json
+
+# Report as markdown (for blog posts / issues), focused on specific transports
+./bin/clibench report results/v0.8.0/netem-regional-n20-5cmd.json --format markdown --focus ssh,https
 ```
 
 Output is JSON to stdout. Logs go to stderr.
@@ -273,11 +279,48 @@ contains one file per latency profile with all benchmark modes. See
 reproduction instructions. The blog series uses `tc netem` results at
 n=20 with 5 commands for all published numbers.
 
+## Reports
+
+The `report` subcommand turns a result JSON file into a grouped comparison
+table. Modes are classified into categories (fresh connection, keep-alive /
+reuse, batch) and ranked by median latency within each category.
+
+```bash
+# Table output (default)
+./bin/clibench report results/v0.8.0/netem-regional-n20-5cmd.json
+
+# Focus on specific transports
+./bin/clibench report results/v0.8.0/netem-regional-n20-5cmd.json --focus ssh,https,gnmi
+
+# Markdown output for blog posts or GitHub issues
+./bin/clibench report results/v0.8.0/netem-geo-n10-5cmd.json --format markdown
+
+# ASCII bar charts (table format only)
+./bin/clibench report results/v0.8.0/netem-geo-n10-5cmd.json --bars
+```
+
+Example output:
+
+```
+=== regional (30ms RTT) — 20 iterations, 5 commands ===
+
+FRESH CONNECTION (p50):
+  gnmi fresh-conn        125.3ms  (3 RT)
+  netconf fresh-session  400.3ms  (14 RT)
+  https fresh-conn       476.2ms  (10 RT)
+  ssh fresh-conn         493.3ms  (16 RT)
+
+BATCH (p50):
+  netconf batch-rpc     30.6ms   (1 RT)
+  https batch-post      31.3ms   (1 RT)
+  ssh batch-exec        247.4ms  (9 RT)
+```
+
 ## Project Structure
 
 ```
 cmd/
-  clibench/   # Single CLI binary (bench, server, smoketest subcommands)
+  clibench/   # Single CLI binary (bench, server, smoketest, report subcommands)
 internal/
   bench/      # Benchmark orchestration (modes, iteration logic)
   device/     # Command engine, prefix matching, transcript loading
@@ -291,6 +334,7 @@ internal/
   netconfserver/ # NETCONF 1.1 over SSH subsystem (RFC 6241/6242)
   pktcount/   # AF_PACKET real packet counter (Linux, requires root)
   proxy/      # HTTPS/HTTP3→SSH site proxy (fresh, pooled, keep-alive modes)
+  report/     # Result comparison report generator (classify, group, format)
   restconfserver/ # RESTCONF (RFC 8040) over HTTPS with YANG paths + JSON/XML
   rtcount/    # Connection wrappers counting round trips + I/O ops
   sshserver/  # crypto/ssh server

@@ -9,6 +9,7 @@ type CLI struct {
 	Bench     BenchCmd     `cmd:"" help:"Run transport benchmarks."`
 	Server    ServerCmd    `cmd:"" help:"Start standalone multi-protocol server."`
 	Smoketest SmoketestCmd `cmd:"" help:"Quick integration smoke test."`
+	Report    ReportCmd    `cmd:"" help:"Generate a comparison report from a result JSON file."`
 }
 
 func main() {
