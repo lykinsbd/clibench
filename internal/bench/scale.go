@@ -174,11 +174,13 @@ func sweepLevel(transport string, c Config, n int, open opener) stats.Result {
 	wg.Wait()
 	setupMs := float64(time.Since(setupStart).Microseconds()) / 1000
 
-	// Measure live heap while all N sessions are held open.
+	// Measure live heap while all N sessions are held open. Compare in uint64
+	// (both are HeapInuse readings) and only convert the non-negative delta —
+	// GC between the baseline and here can make peak < base, which we floor to 0.
 	peakHeap := resource.LiveHeap()
-	liveHeapMB := float64(int64(peakHeap)-int64(baseHeap)) / (1024 * 1024)
-	if liveHeapMB < 0 {
-		liveHeapMB = 0
+	var liveHeapMB float64
+	if peakHeap > baseHeap {
+		liveHeapMB = float64(peakHeap-baseHeap) / (1024 * 1024)
 	}
 
 	defer func() {
