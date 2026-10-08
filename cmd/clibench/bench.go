@@ -17,8 +17,8 @@ import (
 	"github.com/lykinsbd/clibench/internal/http3server"
 	"github.com/lykinsbd/clibench/internal/httpserver"
 	latencyPkg "github.com/lykinsbd/clibench/internal/latency"
-	"github.com/lykinsbd/clibench/internal/netem"
 	"github.com/lykinsbd/clibench/internal/netconfserver"
+	"github.com/lykinsbd/clibench/internal/netem"
 	"github.com/lykinsbd/clibench/internal/pktcount"
 	"github.com/lykinsbd/clibench/internal/proxy"
 	"github.com/lykinsbd/clibench/internal/restconfserver"
@@ -28,16 +28,17 @@ import (
 
 // BenchCmd runs transport benchmarks.
 type BenchCmd struct {
-	Transport   []string `help:"Transports to benchmark (${enum}). Comma-separated or repeated." enum:"ssh,https,http3,gnmi,netconf,restconf,proxy,tunnel-https,tunnel-http3,all" default:"all" short:"t"`
-	Iterations  int      `help:"Iterations per benchmark mode." default:"50" short:"n"`
-	Concurrency int      `help:"Concurrent workers." default:"1" short:"c"`
-	Commands    int      `help:"Commands per iteration." default:"1"`
-	Latency     string        `help:"Latency profile (${enum})." enum:"local,campus,regional,leo,continental,leo-remote,intercontinental,transpacific,geo" default:"local" short:"l"`
-	Jitter      time.Duration `help:"Latency variance (standard deviation) added to WAN delay, e.g. 10ms."`
-	Loss        float64       `help:"Packet loss percentage on the WAN link, e.g. 1.0 for 1%."`
-	Userspace   bool          `help:"Use userspace latency injection (no root required)."`
-	Resource    bool          `help:"Capture CPU and memory usage per iteration."`
-	Output      string        `help:"Output format (${enum})." enum:"json,table,csv" default:"json" short:"o"`
+	Transport        []string      `help:"Transports to benchmark (${enum}). Comma-separated or repeated." enum:"ssh,https,http3,gnmi,netconf,restconf,proxy,tunnel-https,tunnel-http3,all" default:"all" short:"t"`
+	Iterations       int           `help:"Iterations per benchmark mode." default:"50" short:"n"`
+	Concurrency      int           `help:"Concurrent workers." default:"1" short:"c"`
+	ConcurrencySweep []int         `help:"Hold-open connection scaling sweep: comma-separated concurrency levels, e.g. 1,10,50,100. Opens N persistent connections simultaneously (per transport) and measures steady-state cost. Overrides the normal per-iteration modes. Transports: ssh, https, gnmi." sep:","`
+	Commands         int           `help:"Commands per iteration." default:"1"`
+	Latency          string        `help:"Latency profile (${enum})." enum:"local,campus,regional,leo,continental,leo-remote,intercontinental,transpacific,geo" default:"local" short:"l"`
+	Jitter           time.Duration `help:"Latency variance (standard deviation) added to WAN delay, e.g. 10ms."`
+	Loss             float64       `help:"Packet loss percentage on the WAN link, e.g. 1.0 for 1%."`
+	Userspace        bool          `help:"Use userspace latency injection (no root required)."`
+	Resource         bool          `help:"Capture CPU and memory usage per iteration."`
+	Output           string        `help:"Output format (${enum})." enum:"json,table,csv" default:"json" short:"o"`
 
 	SSHPort          int `help:"SSH listen port." default:"2222" group:"server"`
 	HTTPSPort        int `help:"HTTPS listen port." default:"8443" group:"server"`
@@ -66,18 +67,19 @@ func (b *BenchCmd) has(t string) bool {
 
 // benchEnv holds all addresses computed from BenchCmd ports.
 // Port layout (from base ports):
-//   SSHPort          — main SSH server (WAN delay)
-//   SSHPort+1000     — backend SSH for proxy/tunnel (campus delay)
-//   HTTPSPort        — main HTTPS server (WAN delay)
-//   HTTP3Port        — main HTTP/3 server (WAN delay)
-//   ProxyPort        — proxy fresh-SSH mode (WAN delay)
-//   ProxyPort+1      — proxy pooled-SSH mode (WAN delay)
-//   ProxyPort+2      — tunnel site HTTPS proxy (WAN delay)
-//   ProxyPort+3      — tunnel site HTTP/3 proxy (WAN delay)
-//   ProxyPort+4      — H3 proxy fresh-SSH mode (WAN delay)
-//   ProxyPort+5      — H3 proxy pooled-SSH mode (WAN delay)
-//   HeadendHTTPSPort — tunnel headend SSH (campus delay)
-//   HeadendH3Port    — tunnel headend SSH/H3 (campus delay)
+//
+//	SSHPort          — main SSH server (WAN delay)
+//	SSHPort+1000     — backend SSH for proxy/tunnel (campus delay)
+//	HTTPSPort        — main HTTPS server (WAN delay)
+//	HTTP3Port        — main HTTP/3 server (WAN delay)
+//	ProxyPort        — proxy fresh-SSH mode (WAN delay)
+//	ProxyPort+1      — proxy pooled-SSH mode (WAN delay)
+//	ProxyPort+2      — tunnel site HTTPS proxy (WAN delay)
+//	ProxyPort+3      — tunnel site HTTP/3 proxy (WAN delay)
+//	ProxyPort+4      — H3 proxy fresh-SSH mode (WAN delay)
+//	ProxyPort+5      — H3 proxy pooled-SSH mode (WAN delay)
+//	HeadendHTTPSPort — tunnel headend SSH (campus delay)
+//	HeadendH3Port    — tunnel headend SSH/H3 (campus delay)
 type benchEnv struct {
 	sshAddr             string
 	httpsAddr           string
@@ -352,6 +354,11 @@ func (b *BenchCmd) runBenchmarks(e *benchEnv, pc *pktcount.Counter) []stats.Resu
 		cfg.PktCounter = pc
 	}
 
+	// Hold-open connection scaling sweep (issue #49) overrides the per-iteration modes.
+	if len(b.ConcurrencySweep) > 0 {
+		return b.runSweep(e, cfg)
+	}
+
 	var results []stats.Result
 
 	if b.has("ssh") {
@@ -394,6 +401,34 @@ func (b *BenchCmd) runBenchmarks(e *benchEnv, pc *pktcount.Counter) []stats.Resu
 		results = append(results, bench.Tunnel(bench.TunnelConfig{Config: cfg, H3HeadendAddr: e.headendH3Addr})...)
 	}
 
+	return results
+}
+
+// runSweep executes the hold-open connection scaling sweep (issue #49) for each
+// selected transport that the sweep supports (ssh, https, gnmi), concatenating
+// one result per (transport, concurrency level).
+func (b *BenchCmd) runSweep(e *benchEnv, cfg bench.Config) []stats.Result {
+	addrs := map[string]string{
+		"ssh":   e.sshAddr,
+		"https": e.httpsAddr,
+		"gnmi":  e.gnmiAddr,
+	}
+	// Deterministic order for stable output.
+	order := []string{"ssh", "https", "gnmi"}
+	var results []stats.Result
+	ran := false
+	for _, t := range order {
+		if !b.has(t) {
+			continue
+		}
+		c := cfg
+		c.Addr = addrs[t]
+		results = append(results, bench.Sweep(t, c, b.ConcurrencySweep)...)
+		ran = true
+	}
+	if !ran {
+		log.Printf("--concurrency-sweep: none of the selected transports support sweep mode (supported: ssh, https, gnmi)")
+	}
 	return results
 }
 
@@ -448,8 +483,14 @@ func outputResults(results []stats.Result, format string) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(results)
 	case "table":
+		if isSweep(results) {
+			return writeSweepTable(os.Stdout, results)
+		}
 		return writeTable(os.Stdout, results)
 	case "csv":
+		if isSweep(results) {
+			return writeSweepCSV(os.Stdout, results)
+		}
 		return writeCSV(os.Stdout, results)
 	default:
 		return fmt.Errorf("unknown output format %q", format)

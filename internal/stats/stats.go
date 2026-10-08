@@ -33,12 +33,18 @@ type Result struct {
 	CPUUs       int64   `json:"cpu_us,omitempty"`
 	AllocBytes  uint64  `json:"alloc_bytes,omitempty"`
 	Allocs      uint64  `json:"allocs,omitempty"`
-	AvgMs       float64 `json:"avg_ms"`
-	MinMs       float64 `json:"min_ms"`
-	MaxMs       float64 `json:"max_ms"`
-	P50Ms       float64 `json:"p50_ms"`
-	P95Ms       float64 `json:"p95_ms"`
-	StddevMs    float64 `json:"stddev_ms"`
+	// Sweep-mode fields (set only by the concurrency-sweep benchmark).
+	SweepN     int     `json:"sweep_concurrency,omitempty"` // number of simultaneous held connections
+	SetupMs    float64 `json:"setup_ms,omitempty"`          // wall time to open all N connections
+	WallMs     float64 `json:"wall_ms,omitempty"`           // wall time to run commands across all N
+	OpsPerSec  float64 `json:"ops_per_sec,omitempty"`       // operations/second at this level
+	LiveHeapMB float64 `json:"live_heap_mb,omitempty"`      // peak live heap while N sessions held
+	AvgMs      float64 `json:"avg_ms"`
+	MinMs      float64 `json:"min_ms"`
+	MaxMs      float64 `json:"max_ms"`
+	P50Ms      float64 `json:"p50_ms"`
+	P95Ms      float64 `json:"p95_ms"`
+	StddevMs   float64 `json:"stddev_ms"`
 }
 
 // IterCounts holds per-iteration counters collected alongside durations.

@@ -8,9 +8,10 @@ import (
 
 // Snapshot holds resource usage at a point in time.
 type Snapshot struct {
-	CPUNs  int64
-	Allocs uint64
-	Bytes  uint64
+	CPUNs     int64
+	Allocs    uint64
+	Bytes     uint64
+	LiveBytes uint64 // HeapInuse: live heap in use at snapshot time (not cumulative)
 }
 
 // Now captures current resource usage.
@@ -18,10 +19,21 @@ func Now() Snapshot {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	return Snapshot{
-		CPUNs:  cpuNanos(),
-		Allocs: m.Mallocs,
-		Bytes:  m.TotalAlloc,
+		CPUNs:     cpuNanos(),
+		Allocs:    m.Mallocs,
+		Bytes:     m.TotalAlloc,
+		LiveBytes: m.HeapInuse,
 	}
+}
+
+// LiveHeap returns the current live heap in use, in bytes. Unlike Bytes
+// (cumulative TotalAlloc) this reflects the real footprint at the instant of
+// the call — the right metric for "how much RAM is held while N sessions are
+// open".
+func LiveHeap() uint64 {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	return m.HeapInuse
 }
 
 // Delta holds the resource difference between two snapshots.
