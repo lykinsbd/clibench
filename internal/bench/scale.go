@@ -21,11 +21,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/quic-go/quic-go/http3"
+
 	"github.com/lykinsbd/clibench/internal/resource"
 	"github.com/lykinsbd/clibench/internal/rtcount"
 	"github.com/lykinsbd/clibench/internal/stats"
 
 	"github.com/lykinsbd/clibench/internal/gnmiserver"
+	"github.com/lykinsbd/clibench/internal/netconfserver"
 	pb "github.com/openconfig/gnmi/proto/gnmi"
 	"google.golang.org/grpc"
 )
@@ -40,14 +43,19 @@ type sweepConn struct {
 // opener dials one held connection for a transport, or returns an error.
 type opener func(c Config) (*sweepConn, error)
 
-// sweepOpeners maps a transport name to its hold-open dialer. Only the
-// transports with the most interesting pooling/multiplexing behaviour are
-// included in the first cut (issue #49); others are a follow-up.
+// sweepOpeners maps a transport name to its hold-open dialer. All six
+// client transports are sweep-capable: ssh/https/gnmi (issue #49) plus
+// http3/netconf/restconf (issue #58). The compound transports (proxy,
+// tunnel-*) are headend topologies, not a single held connection, so they
+// are deliberately excluded.
 func sweepOpeners() map[string]opener {
 	return map[string]opener{
-		"ssh":   openSSH,
-		"https": openHTTPS,
-		"gnmi":  openGNMI,
+		"ssh":      openSSH,
+		"https":    openHTTPS,
+		"gnmi":     openGNMI,
+		"http3":    openHTTP3,
+		"netconf":  openNETCONF,
+		"restconf": openRESTCONF,
 	}
 }
 
@@ -126,7 +134,89 @@ func openGNMI(c Config) (*sweepConn, error) {
 	}, nil
 }
 
-// Sweep runs the concurrency sweep for the given transport across every level
+// openHTTP3 holds one QUIC connection open (issue #58). Uniform with the other
+// transports: N separate QUIC connections, not one connection with N streams —
+// so the sweep compares "cost of N held HTTP/3 sessions" apples-to-apples with
+// ssh/https/gnmi. Each held connection keeps its own UDP socket, so very high N
+// can reach the process fd limit sooner than the TCP transports.
+func openHTTP3(c Config) (*sweepConn, error) {
+	tlsCfg := &tls.Config{
+		InsecureSkipVerify: true, //nolint:gosec // benchmark server uses a self-signed cert
+		NextProtos:         []string{http3.NextProtoH3},
+	}
+	tr := &http3.Transport{TLSClientConfig: tlsCfg}
+	client := &http.Client{Transport: tr, Timeout: 30 * time.Second}
+	// Warm the QUIC connection so setup timing reflects a live, usable session.
+	if err := doHTTPExec(client, c.Addr, c.User, c.Pass); err != nil {
+		_ = tr.Close()
+		return nil, err
+	}
+	return &sweepConn{
+		exec: func() error {
+			for i := 0; i < c.Commands; i++ {
+				if err := doHTTPExec(client, c.Addr, c.User, c.Pass); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+		close: func() { _ = tr.Close() },
+	}, nil
+}
+
+// openNETCONF holds one NETCONF session open (issue #58): an SSH connection plus
+// a persistent subsystem channel with per-session server state. This is the
+// heaviest held-session footprint of any transport, which is the point — it
+// surfaces the memory cost of managing N simultaneous NETCONF sessions.
+func openNETCONF(c Config) (*sweepConn, error) {
+	ch, _, cleanup, err := netconfDial(c.Addr, c.User, c.Pass)
+	if err != nil {
+		return nil, err
+	}
+	msgCounter := 0
+	return &sweepConn{
+		exec: func() error {
+			for i := 0; i < c.Commands; i++ {
+				msgCounter++
+				msg := netconfserver.GetRPC(msgCounter, "show version")
+				if err := netconfserver.WriteChunked(ch, msg); err != nil {
+					return err
+				}
+				if _, err := netconfserver.ReadChunked(ch); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+		close: cleanup,
+	}, nil
+}
+
+// openRESTCONF holds one keep-alive TLS connection open (issue #58), mirroring a
+// per-device RESTCONF keep-alive pool. Workload is a JSON GET so the sweep
+// captures RESTCONF-vs-NETCONF held-session scaling, the core #49 comparison.
+func openRESTCONF(c Config) (*sweepConn, error) {
+	tlsCfg := &tls.Config{InsecureSkipVerify: true} //nolint:gosec // benchmark server uses a self-signed cert
+	tr := &http.Transport{TLSClientConfig: tlsCfg, MaxIdleConnsPerHost: 1}
+	client := &http.Client{Transport: tr, Timeout: 30 * time.Second}
+	const accept = "application/yang-data+json"
+	// Warm the connection so setup timing reflects a live, usable session.
+	if err := restconfGet(client, c.Addr, c.User, c.Pass, "show version", accept); err != nil {
+		tr.CloseIdleConnections()
+		return nil, err
+	}
+	return &sweepConn{
+		exec: func() error {
+			for i := 0; i < c.Commands; i++ {
+				if err := restconfGet(client, c.Addr, c.User, c.Pass, "show version", accept); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+		close: func() { tr.CloseIdleConnections() },
+	}, nil
+}
 // in c-derived levels, returning one stats.Result per (transport, level).
 func Sweep(transport string, c Config, levels []int) []stats.Result {
 	open, ok := sweepOpeners()[transport]

@@ -3,6 +3,11 @@ package bench
 import (
 	"net"
 	"testing"
+
+	"github.com/lykinsbd/clibench/internal/netconfserver"
+	"github.com/lykinsbd/clibench/internal/restconfserver"
+	"github.com/lykinsbd/clibench/internal/stats"
+	"github.com/lykinsbd/clibench/internal/testutil"
 )
 
 func TestSweepSSH(t *testing.T) {
@@ -63,9 +68,92 @@ func TestSweepHTTPS(t *testing.T) {
 	}
 }
 
+// assertSweepResults checks the common invariants for a successful sweep run.
+func assertSweepResults(t *testing.T, transport string, results []stats.Result, levels []int) {
+	t.Helper()
+	if len(results) != len(levels) {
+		t.Fatalf("%s: expected %d sweep results, got %d", transport, len(levels), len(results))
+	}
+	for i, r := range results {
+		if r.Transport != transport {
+			t.Errorf("%s result %d: expected transport %q, got %q", transport, i, transport, r.Transport)
+		}
+		if r.Operation != "sweep" {
+			t.Errorf("%s result %d: expected operation sweep, got %q", transport, i, r.Operation)
+		}
+		if r.SweepN != levels[i] {
+			t.Errorf("%s result %d: expected SweepN %d, got %d", transport, i, levels[i], r.SweepN)
+		}
+		if r.Errors > 0 {
+			t.Errorf("%s sweep N=%d: %d errors", transport, r.SweepN, r.Errors)
+		}
+		if r.SetupMs <= 0 {
+			t.Errorf("%s sweep N=%d: setup_ms should be > 0, got %f", transport, r.SweepN, r.SetupMs)
+		}
+		if r.OpsPerSec <= 0 {
+			t.Errorf("%s sweep N=%d: ops_per_sec should be > 0, got %f", transport, r.SweepN, r.OpsPerSec)
+		}
+	}
+}
+
+func setupNETCONFServer(t *testing.T) string {
+	t.Helper()
+	dev := testutil.NewDevice(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := netconfserver.New(ln.Addr().String(), dev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.SetListener(ln)
+	go srv.ListenAndServe() //nolint:errcheck
+	t.Cleanup(func() { srv.Close() })
+	testutil.WaitTCP(t, ln.Addr().String())
+	return ln.Addr().String()
+}
+
+func setupRESTCONFServer(t *testing.T) string {
+	t.Helper()
+	dev := testutil.NewDevice(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := restconfserver.New(ln.Addr().String(), dev)
+	srv.SetListener(ln)
+	go srv.ListenAndServeTLS() //nolint:errcheck
+	t.Cleanup(func() { srv.Close() })
+	testutil.WaitTCP(t, ln.Addr().String())
+	return ln.Addr().String()
+}
+
+func TestSweepHTTP3(t *testing.T) {
+	h3Addr := setupHTTP3Server(t)
+	levels := []int{1, 3}
+	assertSweepResults(t, "http3", Sweep("http3", baseCfg(h3Addr), levels), levels)
+}
+
+func TestSweepNETCONF(t *testing.T) {
+	addr := setupNETCONFServer(t)
+	levels := []int{1, 2, 4}
+	assertSweepResults(t, "netconf", Sweep("netconf", baseCfg(addr), levels), levels)
+}
+
+func TestSweepRESTCONF(t *testing.T) {
+	addr := setupRESTCONFServer(t)
+	levels := []int{1, 3}
+	assertSweepResults(t, "restconf", Sweep("restconf", baseCfg(addr), levels), levels)
+}
+
 func TestSweepUnsupportedTransport(t *testing.T) {
-	if got := Sweep("netconf", baseCfg("127.0.0.1:1"), []int{1}); got != nil {
-		t.Errorf("expected nil for unsupported transport, got %d results", len(got))
+	// proxy/tunnel are compound topologies, deliberately excluded from the sweep;
+	// a bogus name must also return nil.
+	for _, tr := range []string{"proxy", "tunnel-https", "bogus"} {
+		if got := Sweep(tr, baseCfg("127.0.0.1:1"), []int{1}); got != nil {
+			t.Errorf("transport %q: expected nil for unsupported transport, got %d results", tr, len(got))
+		}
 	}
 }
 

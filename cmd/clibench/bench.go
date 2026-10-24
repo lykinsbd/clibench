@@ -31,7 +31,7 @@ type BenchCmd struct {
 	Transport        []string      `help:"Transports to benchmark (${enum}). Comma-separated or repeated." enum:"ssh,https,http3,gnmi,netconf,restconf,proxy,tunnel-https,tunnel-http3,all" default:"all" short:"t"`
 	Iterations       int           `help:"Iterations per benchmark mode." default:"50" short:"n"`
 	Concurrency      int           `help:"Concurrent workers." default:"1" short:"c"`
-	ConcurrencySweep []int         `help:"Hold-open connection scaling sweep: comma-separated concurrency levels, e.g. 1,10,50,100. Opens N persistent connections simultaneously (per transport) and measures steady-state cost. Overrides the normal per-iteration modes. Transports: ssh, https, gnmi." sep:","`
+	ConcurrencySweep []int         `help:"Hold-open connection scaling sweep: comma-separated concurrency levels, e.g. 1,10,50,100. Opens N persistent connections simultaneously (per transport) and measures steady-state cost. Overrides the normal per-iteration modes. Transports: ssh, https, gnmi, http3, netconf, restconf (http3 holds N separate QUIC connections, one UDP socket each)." sep:","`
 	Commands         int           `help:"Commands per iteration." default:"1"`
 	Latency          string        `help:"Latency profile (${enum})." enum:"local,campus,regional,leo,continental,leo-remote,intercontinental,transpacific,geo" default:"local" short:"l"`
 	Jitter           time.Duration `help:"Latency variance (standard deviation) added to WAN delay, e.g. 10ms."`
@@ -404,17 +404,20 @@ func (b *BenchCmd) runBenchmarks(e *benchEnv, pc *pktcount.Counter) []stats.Resu
 	return results
 }
 
-// runSweep executes the hold-open connection scaling sweep (issue #49) for each
-// selected transport that the sweep supports (ssh, https, gnmi), concatenating
-// one result per (transport, concurrency level).
+// runSweep executes the hold-open connection scaling sweep (issues #49, #58) for
+// each selected transport that the sweep supports (ssh, https, gnmi, http3,
+// netconf, restconf), concatenating one result per (transport, concurrency level).
 func (b *BenchCmd) runSweep(e *benchEnv, cfg bench.Config) []stats.Result {
 	addrs := map[string]string{
-		"ssh":   e.sshAddr,
-		"https": e.httpsAddr,
-		"gnmi":  e.gnmiAddr,
+		"ssh":      e.sshAddr,
+		"https":    e.httpsAddr,
+		"gnmi":     e.gnmiAddr,
+		"http3":    e.http3Addr,
+		"netconf":  e.netconfAddr,
+		"restconf": e.restconfAddr,
 	}
 	// Deterministic order for stable output.
-	order := []string{"ssh", "https", "gnmi"}
+	order := []string{"ssh", "https", "gnmi", "http3", "netconf", "restconf"}
 	var results []stats.Result
 	ran := false
 	for _, t := range order {
@@ -427,7 +430,7 @@ func (b *BenchCmd) runSweep(e *benchEnv, cfg bench.Config) []stats.Result {
 		ran = true
 	}
 	if !ran {
-		log.Printf("--concurrency-sweep: none of the selected transports support sweep mode (supported: ssh, https, gnmi)")
+		log.Printf("--concurrency-sweep: none of the selected transports support sweep mode (supported: ssh, https, gnmi, http3, netconf, restconf)")
 	}
 	return results
 }
