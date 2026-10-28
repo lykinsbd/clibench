@@ -80,6 +80,13 @@ sudo ./bin/clibench bench --latency regional --iterations 20 --commands 5 --tran
 # restconf (http3 holds N separate QUIC connections, one UDP socket each).
 ./bin/clibench bench --latency regional --concurrency-sweep 1,10,50,100,200 --commands 3 --transport ssh,https,gnmi,http3,netconf,restconf --output table
 
+# QUIC stream multiplexing: the http3-streams pseudo-transport holds ONE QUIC
+# connection open and sweeps N concurrent streams over it (one handshake, one
+# UDP socket). Run it beside http3 to compare connection scaling vs stream
+# scaling — setup/heap stay ~flat for streams while per-stream p50/p95 climbs
+# under contention on the single congestion-controlled path.
+./bin/clibench bench --latency regional --concurrency-sweep 1,10,50,100 --commands 3 --transport http3,http3-streams --output table
+
 # Table output for quick comparison
 ./bin/clibench bench --latency local --iterations 20 --commands 5 --output table
 

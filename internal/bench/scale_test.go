@@ -135,6 +135,27 @@ func TestSweepHTTP3(t *testing.T) {
 	assertSweepResults(t, "http3", Sweep("http3", baseCfg(h3Addr), levels), levels)
 }
 
+func TestSweepHTTP3Streams(t *testing.T) {
+	h3Addr := setupHTTP3Server(t)
+	levels := []int{1, 3, 8}
+	results := SweepStreams(baseCfg(h3Addr), levels)
+	// Standard sweep invariants, under the http3-streams label.
+	assertSweepResults(t, "http3-streams", results, levels)
+
+	// Stream-mode signature: one shared QUIC connection means setup is a single
+	// handshake regardless of N, so setup must NOT scale with stream count the
+	// way connection-mode does. We assert the largest-N setup stays within a
+	// generous bound of the N=1 setup (loopback handshakes are sub-ms; the bound
+	// is loose to avoid flakiness while still catching per-stream handshaking).
+	base := results[0].SetupMs
+	top := results[len(results)-1].SetupMs
+	if base > 0 && top > base*10+5 {
+		t.Errorf("http3-streams setup should stay ~constant across N (one shared handshake); "+
+			"N=%d setup %.3fms vs N=%d setup %.3fms looks like per-stream connections",
+			results[len(results)-1].SweepN, top, results[0].SweepN, base)
+	}
+}
+
 func TestSweepNETCONF(t *testing.T) {
 	addr := setupNETCONFServer(t)
 	levels := []int{1, 2, 4}
