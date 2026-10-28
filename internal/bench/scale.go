@@ -233,6 +233,120 @@ func Sweep(transport string, c Config, levels []int) []stats.Result {
 	return results
 }
 
+// SweepStreams runs the QUIC stream-multiplexing sweep (issue #60): instead of
+// N separate connections, it holds ONE HTTP/3 connection open and fires N
+// concurrent streams over it. This is the QUIC-native counterpart to the
+// connection-mode http3 sweep — the comparison is most useful run side by side
+// (--transports http3,http3-streams). Only HTTP/3 multiplexes this way, so this
+// mode is exposed solely as the http3-streams pseudo-transport. Returns one
+// stats.Result per level, labeled "http3-streams" with SweepN meaning streams.
+func SweepStreams(c Config, levels []int) []stats.Result {
+	results := make([]stats.Result, 0, len(levels))
+	for _, n := range levels {
+		if n < 1 {
+			continue
+		}
+		results = append(results, sweepLevelStreams(c, n))
+	}
+	return results
+}
+
+// sweepLevelStreams opens a single QUIC connection and runs n concurrent
+// requests over it, each multiplexed as its own stream by Go's http3.Transport.
+// Setup times the single shared handshake (so it stays ~constant across n,
+// unlike connection-mode), and per-stream p50/p95 under contention is the
+// signal of interest. The barrier-sync/summarize machinery mirrors sweepLevel.
+func sweepLevelStreams(c Config, n int) stats.Result {
+	const transport = "http3-streams"
+	log.Printf("Sweep %s: 1 QUIC connection, %d concurrent streams (%d cmds each)", transport, n, c.Commands)
+	c.pktReset()
+
+	// Phase 1 — open ONE shared QUIC connection, timing the single handshake.
+	runtime.GC() // clean live-heap baseline before holding the connection
+	baseHeap := resource.LiveHeap()
+	setupStart := time.Now()
+	tlsCfg := &tls.Config{
+		InsecureSkipVerify: true, //nolint:gosec // benchmark server uses a self-signed cert
+		NextProtos:         []string{http3.NextProtoH3},
+	}
+	tr := &http3.Transport{TLSClientConfig: tlsCfg}
+	client := &http.Client{Transport: tr, Timeout: 30 * time.Second}
+	// Warm the connection so setup timing reflects a live, usable session and
+	// the single QUIC handshake completes before streams fan out.
+	warmErr := doHTTPExec(client, c.Addr, c.User, c.Pass)
+	setupMs := float64(time.Since(setupStart).Microseconds()) / 1000
+	defer func() { _ = tr.Close() }()
+
+	if warmErr != nil {
+		r := c.summarize(transport, "sweep", []time.Duration{errDuration}, c.makeCounters())
+		r.SweepN = n
+		r.SetupMs = setupMs
+		return r
+	}
+
+	// Measure live heap while the single connection holds n in-flight streams.
+	peakHeap := resource.LiveHeap()
+	var liveHeapMB float64
+	if peakHeap > baseHeap {
+		liveHeapMB = float64(peakHeap-baseHeap) / (1024 * 1024)
+	}
+
+	// Phase 2 — barrier-synced: n goroutines each issue requests through the
+	// SAME client, so they multiplex as concurrent streams on the one connection.
+	start := make(chan struct{})
+	perStream := make([]time.Duration, n)
+	var wg sync.WaitGroup
+	wallStart := time.Now()
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			<-start // barrier
+			t0 := time.Now()
+			for j := 0; j < c.Commands; j++ {
+				if err := doHTTPExec(client, c.Addr, c.User, c.Pass); err != nil {
+					perStream[idx] = errDuration
+					return
+				}
+			}
+			perStream[idx] = time.Since(t0)
+		}(i)
+	}
+	close(start) // release the barrier
+	wg.Wait()
+	wallMs := float64(time.Since(wallStart).Microseconds()) / 1000
+
+	cnt := c.makeCounters()
+	sc := stats.SummarizeConfig{
+		Transport:   transport,
+		Operation:   "sweep",
+		Commands:    c.Commands,
+		Iterations:  n,
+		Concurrency: n,
+		Profile:     c.Profile,
+		RTTms:       c.RTTms,
+		JitterMs:    c.JitterMs,
+		LossPct:     c.LossPct,
+		Times:       perStream,
+		Counts:      cnt.iter(),
+	}
+	r := stats.Summarize(sc)
+	if c.PktCounter != nil {
+		r.PacketsIn, r.PacketsOut = c.PktCounter.Snapshot()
+	}
+
+	// Ops = successful streams * commands each.
+	ops := (n - r.Errors) * c.Commands
+	r.SweepN = n
+	r.SetupMs = setupMs
+	r.WallMs = wallMs
+	r.LiveHeapMB = liveHeapMB
+	if wallMs > 0 {
+		r.OpsPerSec = float64(ops) / (wallMs / 1000)
+	}
+	return r
+}
+
 // sweepLevel opens n connections, holds them open, runs the workload across all
 // of them in parallel, and summarizes.
 func sweepLevel(transport string, c Config, n int, open opener) stats.Result {

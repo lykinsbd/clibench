@@ -28,10 +28,10 @@ import (
 
 // BenchCmd runs transport benchmarks.
 type BenchCmd struct {
-	Transport        []string      `help:"Transports to benchmark (${enum}). Comma-separated or repeated." enum:"ssh,https,http3,gnmi,netconf,restconf,proxy,tunnel-https,tunnel-http3,all" default:"all" short:"t"`
+	Transport        []string      `help:"Transports to benchmark (${enum}). Comma-separated or repeated." enum:"ssh,https,http3,http3-streams,gnmi,netconf,restconf,proxy,tunnel-https,tunnel-http3,all" default:"all" short:"t"`
 	Iterations       int           `help:"Iterations per benchmark mode." default:"50" short:"n"`
 	Concurrency      int           `help:"Concurrent workers." default:"1" short:"c"`
-	ConcurrencySweep []int         `help:"Hold-open connection scaling sweep: comma-separated concurrency levels, e.g. 1,10,50,100. Opens N persistent connections simultaneously (per transport) and measures steady-state cost. Overrides the normal per-iteration modes. Transports: ssh, https, gnmi, http3, netconf, restconf (http3 holds N separate QUIC connections, one UDP socket each)." sep:","`
+	ConcurrencySweep []int         `help:"Hold-open connection scaling sweep: comma-separated concurrency levels, e.g. 1,10,50,100. Opens N persistent connections simultaneously (per transport) and measures steady-state cost. Overrides the normal per-iteration modes. Transports: ssh, https, gnmi, http3, netconf, restconf (http3 holds N separate QUIC connections, one UDP socket each). The http3-streams pseudo-transport instead holds ONE QUIC connection open and sweeps N concurrent streams over it — run both (--transports http3,http3-streams) to compare connection vs stream scaling." sep:","`
 	Commands         int           `help:"Commands per iteration." default:"1"`
 	Latency          string        `help:"Latency profile (${enum})." enum:"local,campus,regional,leo,continental,leo-remote,intercontinental,transpacific,geo" default:"local" short:"l"`
 	Jitter           time.Duration `help:"Latency variance (standard deviation) added to WAN delay, e.g. 10ms."`
@@ -407,6 +407,8 @@ func (b *BenchCmd) runBenchmarks(e *benchEnv, pc *pktcount.Counter) []stats.Resu
 // runSweep executes the hold-open connection scaling sweep (issues #49, #58) for
 // each selected transport that the sweep supports (ssh, https, gnmi, http3,
 // netconf, restconf), concatenating one result per (transport, concurrency level).
+// The http3-streams pseudo-transport (issue #60) is the QUIC stream-multiplexing
+// counterpart: one connection, N streams, run side by side with http3 to compare.
 func (b *BenchCmd) runSweep(e *benchEnv, cfg bench.Config) []stats.Result {
 	addrs := map[string]string{
 		"ssh":      e.sshAddr,
@@ -417,7 +419,7 @@ func (b *BenchCmd) runSweep(e *benchEnv, cfg bench.Config) []stats.Result {
 		"restconf": e.restconfAddr,
 	}
 	// Deterministic order for stable output.
-	order := []string{"ssh", "https", "gnmi", "http3", "netconf", "restconf"}
+	order := []string{"ssh", "https", "gnmi", "http3", "http3-streams", "netconf", "restconf"}
 	var results []stats.Result
 	ran := false
 	for _, t := range order {
@@ -425,12 +427,21 @@ func (b *BenchCmd) runSweep(e *benchEnv, cfg bench.Config) []stats.Result {
 			continue
 		}
 		c := cfg
+		// http3-streams is a pseudo-transport: one QUIC connection, N streams
+		// (issue #60). It shares the http3 server address but uses the
+		// stream-multiplexing level function instead of the connection sweep.
+		if t == "http3-streams" {
+			c.Addr = addrs["http3"]
+			results = append(results, bench.SweepStreams(c, b.ConcurrencySweep)...)
+			ran = true
+			continue
+		}
 		c.Addr = addrs[t]
 		results = append(results, bench.Sweep(t, c, b.ConcurrencySweep)...)
 		ran = true
 	}
 	if !ran {
-		log.Printf("--concurrency-sweep: none of the selected transports support sweep mode (supported: ssh, https, gnmi, http3, netconf, restconf)")
+		log.Printf("--concurrency-sweep: none of the selected transports support sweep mode (supported: ssh, https, gnmi, http3, http3-streams, netconf, restconf)")
 	}
 	return results
 }
